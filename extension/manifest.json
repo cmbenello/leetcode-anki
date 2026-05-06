@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "LeetCode Anki",
+  "version": "0.2.0",
+  "description": "Spaced repetition for LeetCode + NeetCode with auto-commits to a GitHub progress repo.",
+  "permissions": ["storage", "webNavigation", "alarms", "notifications"],
+  "host_permissions": [
+    "https://leetcode.com/*",
+    "https://*.leetcode.com/*",
+    "https://neetcode.io/*",
+    "https://*.neetcode.io/*",
+    "https://api.github.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://leetcode.com/problems/*",
+        "https://*.leetcode.com/problems/*",
+        "https://neetcode.io/*",
+        "https://*.neetcode.io/*"
+      ],
+      "js": ["content/leetcode.js"],
+      "css": ["content/widget.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["content/inject.js"],
+      "matches": [
+        "https://leetcode.com/*",
+        "https://*.leetcode.com/*",
+        "https://neetcode.io/*",
+        "https://*.neetcode.io/*"
+      ]
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

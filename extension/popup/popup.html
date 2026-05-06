@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="header">
+    <h1>LeetCode Anki</h1>
+    <a id="open-options" href="#" title="Settings">⚙</a>
+  </div>
+
+  <div class="stats">
+    <span><b id="stat-due">0</b> due</span>
+    <span><b id="stat-total">0</b> tracked</span>
+    <span><b id="stat-today">0</b> today</span>
+  </div>
+
+  <div class="session-bar">
+    <button id="start-session" class="primary">Start session</button>
+    <div id="session-active" class="hidden">
+      <span id="session-progress">0 / 0</span>
+      <button id="stop-session">End</button>
+    </div>
+  </div>
+
+  <h2>Due now</h2>
+  <ul id="due-list" class="list"><li class="empty">Loading…</li></ul>
+
+  <h2>Upcoming</h2>
+  <ul id="upcoming-list" class="list"><li class="empty">—</li></ul>
+
+  <div class="footer">
+    <button id="flush">Push pending to GitHub</button>
+    <span id="flush-status"></span>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

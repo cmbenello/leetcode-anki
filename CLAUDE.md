@@ -1,0 +1,121 @@
+# CLAUDE.md — LeetCode Anki
+
+## What This Is
+
+A Chrome extension (Manifest V3) that adds spaced repetition + GitHub-synced progress tracking to LeetCode/NeetCode practice. SM-2 scheduler, active time tracking, auto-commits to a user-specified GitHub repo on every grade.
+
+**Companion to:** `grind/` (CLI focus tool). They don't share code yet, but eventually both can write to the same GitHub tracker repo.
+
+---
+
+## Current Phase: Phase 1 + 2 (MVP)
+
+Phase 1 = SR loop on LeetCode (local only).
+Phase 2 = GitHub auto-sync on grade.
+
+These ship together because the GitHub sync is the differentiator vs. just using Anki.
+
+Don't start Phase 3 (multi-site adapters), Phase 4 (categorization, FSRS), or Phase 5 (polish) until 1+2 work end-to-end on real LeetCode.
+
+---
+
+## Repo Structure
+
+```
+leetcode-anki/
+├── SPEC.md
+├── CLAUDE.md
+├── CLAUDE_CODE_PROMPT.md
+├── README.md                    # install + usage
+├── extension/
+│   ├── manifest.json            # MV3
+│   ├── background.js            # service worker: SPA nav, GitHub sync queue
+│   ├── content/
+│   │   ├── leetcode.js          # injects on leetcode.com/problems/*
+│   │   ├── inject.js            # page-context: reads window.monaco
+│   │   └── widget.css
+│   ├── popup/
+│   │   ├── popup.html           # due-today list + stats
+│   │   ├── popup.js
+│   │   └── popup.css
+│   ├── options/
+│   │   ├── options.html         # GitHub PAT, repo, sync toggle
+│   │   ├── options.js
+│   │   └── options.css
+│   ├── lib/
+│   │   ├── sm2.js               # pure function, no DOM
+│   │   ├── storage.js           # chrome.storage wrapper
+│   │   ├── github.js            # Git Data API: blob → tree → commit → ref
+│   │   └── time-tracker.js      # active time (visibility + idle)
+│   └── icons/                   # 16, 48, 128
+└── tests/
+    └── sm2.test.js              # node-runnable unit test
+```
+
+---
+
+## Architecture Decisions
+
+### Why Manifest V3 + vanilla JS, no build step
+- The whole extension is < 1500 LOC. A build pipeline adds friction, not value.
+- MV3 is required for new Chrome extensions and supported indefinitely.
+- One-line install: `git clone && load unpacked`.
+
+### Why SM-2 (not FSRS)
+- ~30 lines, well-documented, "good enough" for personal use.
+- FSRS needs a fitted model, which needs review history we don't have on day 1.
+- Phase 4 adds FSRS as an option — opt-in once the user has 100+ reviews to fit on.
+
+### Why SPA-aware content script
+- LeetCode is a single-page React app. `chrome.scripting` only fires on full loads.
+- Background worker listens to `chrome.webNavigation.onHistoryStateUpdated`, sends a `re-init` message to the content script. Content script also runs a `MutationObserver` on `<body>` as a fallback.
+
+### Why a page-context inject script for code extraction
+- Content scripts have an isolated world. `window.monaco` lives in the page world.
+- We inject `inject.js` via a `<script>` tag (registered in `web_accessible_resources`), it reads `monaco.editor.getModels()[0].getValue()`, and `postMessage`s it back.
+- Fallback: read from `localStorage` keys LeetCode uses (`<questionId>_<lang>`).
+
+### Why GitHub Git Data API (not Contents API)
+- Contents API = one HTTP call per file, each is its own commit. Ugly history.
+- Git Data API = build a tree from blobs, one commit, one ref update. Clean history, atomic.
+- Per grade event: ~5 files (solution, meta, notes maybe, log, README, stats). One commit.
+
+### Storage shape
+```js
+// chrome.storage.local["cards"]
+{
+  "two-sum": {
+    slug: "two-sum",
+    title: "Two Sum",
+    ease: 2.5,
+    interval: 6,            // days
+    reps: 3,
+    lapses: 0,
+    due: 1746000000000,     // ms epoch
+    history: [
+      { t: 1745000000000, q: 4, durationMs: 320000, lang: "python3" },
+      ...
+    ]
+  },
+  ...
+}
+
+// chrome.storage.local["settings"]
+{
+  githubToken: "ghp_...",
+  githubRepo: "user/leetcode-tracker",
+  syncEnabled: true,
+  defaultLang: "python3"
+}
+```
+
+---
+
+## Working Here
+
+- Read `SPEC.md` and `CLAUDE_CODE_PROMPT.md` at session start.
+- Stay in Phase 1+2 until both checklists are done.
+- Test the SM-2 algorithm with `node tests/sm2.test.js` before wiring it to UI.
+- Manual test loop: load unpacked → visit `leetcode.com/problems/two-sum` → grade → check `chrome.storage.local` in DevTools → check GitHub repo for commit.
+- Don't add a build step. If you want TypeScript, write `.js` with JSDoc types.
+- Mark `SPEC.md` checklist items with `[x]` when done.

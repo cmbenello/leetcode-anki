@@ -1,0 +1,150 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>LeetCode Anki — Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main>
+    <h1>LeetCode Anki — Settings</h1>
+
+    <section>
+      <h2>Scheduling intervals</h2>
+      <p class="hint">
+        How long after grading before the problem is due again. Use suffixes
+        like <code>30m</code>, <code>2h</code>, <code>3d</code>, or
+        <code>1d12h</code>. Bare numbers are minutes.
+      </p>
+
+      <div class="grid-row">
+        <label>Again<input id="int-again" type="text" placeholder="30m" /></label>
+        <label>Hard<input id="int-hard" type="text" placeholder="1d" /></label>
+        <label>Good<input id="int-good" type="text" placeholder="3d" /></label>
+        <label>Easy<input id="int-easy" type="text" placeholder="10d" /></label>
+      </div>
+
+      <p class="hint" style="margin-top: 14px;">
+        Growth multiplier — applied to the previous interval on each repeat.
+        Floors at the base interval above. Higher = faster spacing.
+      </p>
+
+      <div class="grid-row">
+        <label>Again<input id="grow-again" type="number" step="0.1" disabled value="1.0" title="Again always resets to base" /></label>
+        <label>Hard<input id="grow-hard" type="number" step="0.1" /></label>
+        <label>Good<input id="grow-good" type="number" step="0.1" /></label>
+        <label>Easy<input id="grow-easy" type="number" step="0.1" /></label>
+      </div>
+
+      <div class="row">
+        <button id="reset-intervals">Reset to defaults</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Daily reminder</h2>
+      <p class="hint">
+        Get a Chrome notification listing the problems due today. Click it to
+        open the popup view.
+      </p>
+
+      <label class="checkbox">
+        <input id="reminder-enabled" type="checkbox" />
+        Enable daily reminder
+      </label>
+
+      <label>
+        Time (your local timezone)
+        <input id="reminder-time" type="time" />
+      </label>
+
+      <div class="row">
+        <button id="test-reminder">Send test notification</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>GitHub sync</h2>
+      <p class="hint">
+        Optional. Auto-commits each grade to a repo of your choice. Create an
+        empty GitHub repo first, then paste a Personal Access Token with the
+        <code>repo</code> scope.
+        <a href="https://github.com/settings/tokens?type=beta" target="_blank">Generate a token</a>.
+      </p>
+
+      <label>
+        Tracker repo
+        <input id="github-repo" type="text" placeholder="username/leetcode-tracker" />
+      </label>
+
+      <label>
+        Personal Access Token
+        <input id="github-token" type="password" placeholder="ghp_…" autocomplete="off" />
+      </label>
+
+      <label class="checkbox">
+        <input id="sync-enabled" type="checkbox" />
+        Enable auto-commit on grade
+      </label>
+
+      <div class="row">
+        <button id="verify">Verify access</button>
+        <span id="verify-status"></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Defaults</h2>
+      <label>
+        Default language (used as solution file extension when the editor's language isn't available)
+        <select id="default-lang">
+          <option>python3</option>
+          <option>cpp</option>
+          <option>java</option>
+          <option>javascript</option>
+          <option>typescript</option>
+          <option>go</option>
+          <option>rust</option>
+          <option>kotlin</option>
+          <option>swift</option>
+          <option>ruby</option>
+          <option>scala</option>
+          <option>csharp</option>
+          <option>php</option>
+        </select>
+      </label>
+    </section>
+
+    <section>
+      <h2>Repair card URLs</h2>
+      <p class="hint">
+        For older cards stored before site detection existed, this scans each
+        card's slug against LeetCode's GraphQL. Slugs found there get
+        <code>site: leetcode</code> and a leetcode.com URL. Slugs not found get
+        <code>site: neetcode</code> and a neetcode.io URL. Skips cards that
+        already have a stored URL (those are fine).
+      </p>
+      <div class="row">
+        <button id="repair-urls">Run repair</button>
+        <span id="repair-status"></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Data</h2>
+      <div class="row">
+        <button id="export">Export JSON</button>
+        <button id="import">Import JSON…</button>
+        <input id="import-file" type="file" accept="application/json" hidden />
+      </div>
+    </section>
+
+    <div class="save-bar">
+      <button id="save" class="primary">Save settings</button>
+      <span id="status"></span>
+    </div>
+  </main>
+
+  <script src="options.js" type="module"></script>
+</body>
+</html>

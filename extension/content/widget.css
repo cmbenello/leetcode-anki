@@ -1,0 +1,175 @@
+/* Modal-style grade prompt. Hidden by default; auto-shows on submission. */
+
+#lcanki-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 14, 0.55);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  color: #d8dde3;
+  letter-spacing: 0.005em;
+  user-select: none;
+  backdrop-filter: blur(2px);
+}
+
+/* Hard hide — no transition, no flash on creation. */
+#lcanki-root.lcanki-hidden { display: none; }
+
+/* Fade-in animation only fires when the element is actually visible. */
+@keyframes lcanki-modal-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+#lcanki-root:not(.lcanki-hidden) .lcanki-panel {
+  animation: lcanki-modal-in 0.16s ease;
+}
+
+#lcanki-root .lcanki-panel {
+  width: 460px;
+  max-width: 92vw;
+  background: #1e2128;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  padding: 28px 32px 26px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.7);
+}
+
+#lcanki-root .lcanki-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+#lcanki-root .lcanki-title {
+  font-weight: 500;
+  font-size: 20px;
+  color: #f6e7c6;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#lcanki-root .lcanki-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+#lcanki-root .lcanki-badge:empty { display: none; }
+#lcanki-root .lcanki-badge.lcanki-badge-ok {
+  color: #b8d4be;
+  background: rgba(126, 186, 138, 0.14);
+}
+#lcanki-root .lcanki-badge.lcanki-badge-err {
+  color: #e0b3ad;
+  background: rgba(215, 122, 114, 0.14);
+}
+
+#lcanki-root .lcanki-close {
+  background: transparent;
+  border: none;
+  color: #6e7681;
+  font-size: 22px;
+  line-height: 1;
+  padding: 4px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+#lcanki-root .lcanki-close:hover { color: #d8dde3; }
+
+#lcanki-root .lcanki-meta {
+  color: #8b949e;
+  font-size: 13px;
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+}
+
+#lcanki-root .lcanki-split {
+  color: #6e7681;
+  font-size: 12px;
+  margin-bottom: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+#lcanki-root .lcanki-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+#lcanki-root .lcanki-btn {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #d8dde3;
+  padding: 14px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  font-family: inherit;
+  transition: border-color 0.1s, background 0.1s;
+}
+#lcanki-root .lcanki-btn:hover {
+  border-color: rgba(246, 231, 198, 0.3);
+  background: rgba(246, 231, 198, 0.04);
+}
+#lcanki-root .lcanki-btn:active {
+  transform: scale(0.97);
+}
+#lcanki-root .lcanki-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+#lcanki-root .lcanki-btn.lcanki-btn-active,
+#lcanki-root .lcanki-btn.lcanki-btn-active:disabled {
+  background: rgba(246, 231, 198, 0.16);
+  border-color: rgba(246, 231, 198, 0.55);
+  color: #f6e7c6;
+  opacity: 1;
+}
+#lcanki-root .lcanki-btn.lcanki-btn-active .lcanki-interval {
+  color: rgba(246, 231, 198, 0.6);
+}
+
+@keyframes lcanki-modal-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.97); }
+}
+#lcanki-root.lcanki-leaving .lcanki-panel {
+  animation: lcanki-modal-out 0.16s ease forwards;
+}
+
+#lcanki-root .lcanki-interval {
+  display: block;
+  color: #6e7681;
+  font-size: 12px;
+  font-weight: 400;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+#lcanki-root .lcanki-toast {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  background: rgba(126, 186, 138, 0.1);
+  color: #b8d4be;
+  border: 1px solid rgba(126, 186, 138, 0.2);
+}
+#lcanki-root .lcanki-toast.lcanki-error {
+  background: rgba(215, 122, 114, 0.1);
+  color: #e0b3ad;
+  border-color: rgba(215, 122, 114, 0.25);
+}
