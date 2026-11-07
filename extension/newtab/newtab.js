@@ -344,22 +344,28 @@ let shownKey = null;
 function writeHomeCache(home) {
   try { localStorage.setItem(HOME_CACHE, JSON.stringify(home)); } catch (e) { /* full or blocked: just slower next time */ }
 }
-await (async function paintCached() {
-  // the background's copy is current; localStorage (this page's last answer)
-  // is the fallback if storage is slow to answer
-  let c = await Promise.race([window.__lcankiHome, new Promise(r => setTimeout(() => r(null), 80))]).catch(() => null);
-  if (!c?.goals?.ok || !c?.view?.ok) {
-    try { c = JSON.parse(localStorage.getItem(HOME_CACHE) || 'null'); } catch (e) { c = null; }
-  }
-  if (!c?.goals?.ok || !c?.view?.ok) return;
+function paintHome(c) {
   goalState = c.goals;
   renderPills();
   c.view.now = Date.now();                  // "recent" / "today" relative to now
   growth.update(c.view);
   shownKey = viewKey(c.view);
-})();
-// graph drawn (or nothing cached yet): show the page
+}
+// 1. This page's last copy, synchronously, so the graph is in the very first
+//    frame. Nothing here waits: every millisecond before the first frame is
+//    a millisecond of Chrome's own blank tab showing.
+try {
+  const c = JSON.parse(localStorage.getItem(HOME_CACHE) || 'null');
+  if (c?.goals?.ok && c?.view?.ok) paintHome(c);
+} catch (e) { /* no copy yet: the graph fills in when the worker answers */ }
 document.documentElement.classList.add('lcanki-ready');
+// 2. The background's copy, kept current on every change: replaces it only
+//    if something changed since this page last ran (e.g. a solve).
+window.__lcankiHome?.then((c) => {
+  if (!c?.goals?.ok || !c?.view?.ok || viewKey(c.view) === shownKey) return;
+  paintHome(c);
+  writeHomeCache({ goals: c.goals, view: c.view });
+});
 
 // Refreshes can overlap (a pill click and a tab-focus reload); only the
 // newest one may draw.

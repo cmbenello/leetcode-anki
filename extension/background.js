@@ -2168,11 +2168,16 @@ chrome.notifications?.onClicked.addListener((id) => {
 
 const SWEEP_ALARM = 'lcanki-sweep';
 const CATALOG_ALARM = 'lcanki-catalog';
+// Chrome stops an idle extension after ~30s; the next new tab then waits for
+// a fresh process to start, and Chrome's own blank tab shows meanwhile. A
+// no-op alarm every 30s keeps the process up, so new tabs paint at once.
+const WARM_ALARM = 'lcanki-warm';
 
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === REMINDER_ALARM) fireDailyReminder().catch(() => {});
   if (a.name === SWEEP_ALARM) sweepUngradedAccepts().catch(() => {});
   if (a.name === CATALOG_ALARM) ensureCatalog();
+  // WARM_ALARM: nothing to do — waking up was the point
   // RETRY_ALARM was deliberately removed — sync now happens only on AC and
   // we never auto-flush. If a commit fails, retry manually via the popup.
 });
@@ -2306,6 +2311,7 @@ function bootstrap() {
   runMigrations().catch((e) => console.warn('[lcanki] migration failed', e));
   chrome.alarms.create(SWEEP_ALARM, { periodInMinutes: 60 });
   chrome.alarms.create(CATALOG_ALARM, { periodInMinutes: 24 * 60 });
+  chrome.alarms.create(WARM_ALARM, { periodInMinutes: 0.5 });
   ensureCatalog();
 }
 chrome.runtime.onInstalled.addListener(bootstrap);
