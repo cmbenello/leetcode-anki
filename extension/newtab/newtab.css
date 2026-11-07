@@ -718,3 +718,5 @@ main { padding-top: 34px; }
 .growth-pace { font-size: 12px; }
 
 body { overflow-x: hidden; }   /* the full-bleed graph must not add a sideways scrollbar */
+
+.growth-tip-from { color: var(--ink-faint); font-style: italic; }

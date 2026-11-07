@@ -58,7 +58,14 @@ NeetCode doesn't record dates, so synced problems form the trunk at the centre o
 
 ## The new-tab page
 
-It's deliberately minimal: your goal pills, a large tree graph of your solved problems in one soft silver on flat grey, and a faint ⚙ in the corner. Below that are the daily tracker, stats, Next up and your problem lists.
+It's deliberately minimal: your goal pills, a large tree graph of your solved problems on flat grey, and a faint ⚙ in the corner.
+
+How to read the graph:
+
+- **Slices** are topics. A dot's colour is its topic, brighter where you've solved more.
+- **Distance from the centre** is the order you solved things, reaching the dashed goal ring at 100%.
+- **Lines** mean "built on". Each problem connects to the earlier problem in its topic it's most related to: a LeetCode *similar question* first, otherwise shared topics and NeetCode pattern. Hover a problem to see what it grew from and why.
+- **Layout** is a radial tree, so branches don't tangle. Below that are the daily tracker, stats, Next up and your problem lists.
 
 - **Zoom** the growth view with a pinch or ⌘/Ctrl+scroll.
 - **Drag** to pan, **double-click** to zoom in, and use ⤢ to reset.

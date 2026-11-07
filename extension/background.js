@@ -907,6 +907,10 @@ function solvedProblems(cards, metaAll, nc = null) {
       due: c.due ?? null, reviews: (c.history ?? []).length, lapses: c.lapses ?? 0,
       url: normalizeProblemUrl(c.lastUrl || problemUrl(c.site || 'leetcode', c.slug)),
       nc: nc?.bySlug[c.slug]?.n ?? null,
+      // what the growth view links by: LeetCode's curated similar questions,
+      // then NeetCode's pattern (e.g. "1-D Dynamic Programming")
+      similar: m?.similar ?? [],
+      pattern: nc?.bySlug[c.slug]?.p ?? null,
     });
   }
   return out.sort((a, b) => a.t - b.t || (a.slug < b.slug ? -1 : 1));
@@ -1021,9 +1025,40 @@ async function goalById(id) {
   return goals.find(g => g.id === id) || null;
 }
 
+// Imported and NeetCode-synced problems never had their metadata fetched,
+// and metadata from before v0.3 has no `similar` field — so the growth view
+// can't link them by similar question. Fill those in slowly in the
+// background (one request every ~0.4s, a batch per run) so links improve
+// over a few visits without hammering LeetCode.
+let similarBackfill = null;
+let lastBackfillAt = 0;
+function backfillSimilar(cards) {
+  if (similarBackfill || Date.now() - lastBackfillAt < 10 * 60e3) return;
+  lastBackfillAt = Date.now();
+  similarBackfill = (async () => {
+    try {
+      const metaAll = await getAllMeta();
+      const todo = Object.values(cards)
+        .filter(c => isSolved(c) && !(metaAll[c.slug] && Array.isArray(metaAll[c.slug].similar)))
+        .map(c => c.slug)
+        .slice(0, 80);
+      for (const slug of todo) {
+        try {
+          const m = await fetchQuestionMeta(slug);
+          if (m) await upsertMeta(slug, m);
+        } catch (e) { break; }                  // offline or rate-limited: try again next run
+        await new Promise(r => setTimeout(r, 400));
+      }
+    } finally {
+      similarBackfill = null;
+    }
+  })();
+}
+
 /** Problems for the radial growth view, oldest first. */
 async function getGoalView(id) {
   const [cards, metaAll, nc] = [await getCards(), await richMeta(), await neetcodeIndex()];
+  backfillSimilar(cards);
   const goal = id ? await goalById(id) : null;
   const all = solvedProblems(cards, metaAll, nc);
   const problems = goal ? all.filter(p => goalMatches(goal, p.slug, p.tags)) : all;

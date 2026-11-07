@@ -5,7 +5,10 @@
 //   distance   progress toward the goal: the k-th problem you solved sits at
 //              r0 + (R − r0)·√(k/target), so the tree's AREA grows with your
 //              count and the growth front reaches the goal ring at 100%
-//   edges      each problem hangs off the nearest earlier problem in its topic
+//   edges      each problem grows from the earlier problem in its topic it's
+//              MOST RELATED to: a LeetCode "similar question" first, then the
+//              closest match on topics and NeetCode pattern (see relate()).
+//              Drawn as a radial dendrogram, so subtrees never cross.
 //   nodes      one per problem; size = difficulty, brighter = more recent
 //
 // One colour, flat, no effects. Zoom with a pinch or ⌘/Ctrl+scroll, drag to
@@ -76,7 +79,23 @@ function readColors() {
   COLORS = {};
   for (const [k, [v, fb]] of Object.entries(TOKENS)) COLORS[k] = cs.getPropertyValue(v).trim() || fb;
 }
-readColors();
+if (typeof document !== 'undefined') readColors();
+
+/**
+ * How related two problems are, and why. LeetCode's curated Similar
+ * Questions beat everything; otherwise shared topic tags (Jaccard) plus a
+ * bonus for the same NeetCode pattern ("Sliding Window", "1-D DP", …).
+ */
+export function relate(p, q) {
+  if ((p.similar || []).includes(q.slug) || (q.similar || []).includes(p.slug)) return { score: 2, via: 'similar' };
+  const a = new Set(p.tags || []);
+  let inter = 0;
+  for (const t of q.tags || []) if (a.has(t)) inter += 1;
+  const union = a.size + (q.tags || []).length - inter;
+  const j = union ? inter / union : 0;
+  const samePattern = !!(p.pattern && p.pattern === q.pattern);
+  return { score: j + (samePattern ? 0.35 : 0), via: samePattern ? 'pattern' : j > 0 ? 'topics' : 'topic' };
+}
 
 function hash01(str) {
   let h = 2166136261;
@@ -121,42 +140,85 @@ export function layout(problems, { size, width = size, height = size, target, no
   });
 
   const scale = Math.max(1, Math.min(1.8, R / 254));
+
+  // Pass 1 — links. Within each topic, every problem's parent is the earlier
+  // problem it's most related to (ties to the most recent). Positions play no
+  // part, so the tree is purely "what built on what".
+  const items = problems.map((p, k) => ({ p, k, parent: null, via: 'start', kids: [], size: 0 }));
+  const bySec = {};
+  for (const it of items) (bySec[it.p._topic] ??= []).push(it);
+  for (const list of Object.values(bySec)) {
+    list.forEach((it, i) => {
+      let best = -1;
+      for (let j = 0; j < i; j++) {
+        const rel = relate(it.p, list[j].p);
+        if (rel.score >= best) { best = rel.score; it.parent = list[j]; it.via = rel.via; }
+      }
+      if (it.parent) it.parent.kids.push(it);
+    });
+  }
+  const sizeOf = (it) => (it.size ||= 1 + it.kids.reduce((s, c) => s + sizeOf(c), 0));
+
+  // Pass 2 — angles, as a radial dendrogram: each subtree owns a wedge sized
+  // by how many problems hang off it, and children split their parent's
+  // wedge. Different subtrees never overlap, so edges never cross.
+  const weight = (it) => Math.pow(sizeOf(it), 0.85);
+  function assign(it, lo, hi) {
+    it.ang = (lo + hi) / 2;
+    if (!it.kids.length) return;
+    const total = it.kids.reduce((s, c) => s + weight(c), 0);
+    let a = lo;
+    for (const c of it.kids) {
+      const w = (hi - lo) * weight(c) / total;
+      assign(c, a, a + w);
+      a += w;
+    }
+  }
+  for (const [topic, list] of Object.entries(bySec)) {
+    const sec = sectors[topic];
+    const pad = Math.min(0.035, sec.span * 0.08);
+    const roots = list.filter(it => !it.parent);
+    const total = roots.reduce((s, r) => s + weight(r), 0);
+    let a = sec.start + pad;
+    const span = sec.span - 2 * pad;
+    for (const root of roots) {
+      const w = span * weight(root) / total;
+      assign(root, a, a + w);
+      a += w;
+    }
+  }
+
+  // Pass 3 — positions and edges. Distance from the centre is still solve
+  // order. An edge leaves its parent sideways near the parent's own radius,
+  // then runs straight out to the child (the dendrogram "elbow").
   const nodes = [];
-  problems.forEach((p, k) => {
+  for (const it of items) {
+    const { p, k } = it;
     const sec = sectors[p._topic];
     const r = r0 + (R - r0) * Math.sqrt((k + 1) / T);
-    const want = sec.mid + (hash01(p.slug) - 0.5) * sec.span * 0.9;
-    // parent: nearest earlier node in this sector that sits closer to the hub
-    let parent = null, best = Infinity;
-    const wx = cx + Math.cos(want) * r, wy = cy + Math.sin(want) * r;
-    for (const q of sec.nodes) {
-      if (q.r >= r - 2) continue;
-      const d = Math.hypot(q.x - wx, q.y - wy);
-      if (d < best) { best = d; parent = q; }
-    }
-    const ang = parent ? parent.ang + (want - parent.ang) * 0.6 : want;
+    const ang = it.ang;
     const x = cx + Math.cos(ang) * r, y = cy + Math.sin(ang) * r;
-    const px = parent ? parent.x : cx + Math.cos(ang) * (r0 - 8);
-    const py = parent ? parent.y : cy + Math.sin(ang) * (r0 - 8);
-    // nearly straight edges with a hint of bend — reads as a graph, not a vine
-    const mx = (px + x) / 2, my = (py + y) / 2;
-    const len = Math.hypot(x - px, y - py) || 1;
-    const bend = len * 0.07;
-    const qx = mx + (-(y - py) / len) * bend, qy = my + ((x - px) / len) * bend;
+    const par = it.parent?.node || null;
+    const pr = par ? par.r : r0 - 8;
+    const pa = par ? par.ang : ang;
+    const px = cx + Math.cos(pa) * pr, py = cy + Math.sin(pa) * pr;
+    const er = pr + (r - pr) * 0.18;
+    const qx = cx + Math.cos(ang) * er, qy = cy + Math.sin(ang) * er;
     const age = now - p.t;
     const sameDay = new Date(p.t).toDateString() === new Date(now).toDateString();
-    const pr = parent ? parent.r : r0 - 8;
     const node = {
       ...p, k, r, ang, x, y, px, py, qx, qy, pr,
+      via: it.via, parentTitle: par ? par.title : null,
       // edge width bucket: thick near the centre, thinner toward the edge
       wb: Math.min(3, Math.floor(Math.max(0, (pr - r0) / (R - r0 || 1)) * 4)),
       dot: (p.difficulty === 'Hard' ? 2.8 : p.difficulty === 'Easy' ? 1.9 : 2.35) * Math.sqrt(scale),
       sec: p._topic,
       tone: p.undated ? 'old' : sameDay ? 'today' : age < 7 * DAY ? 'recent' : age < 60 * DAY ? 'mid' : 'old',
     };
+    it.node = node;
     sec.nodes.push(node);
     nodes.push(node);
-  });
+  }
   return { cx, cy, R, r0, T, n, nodes, scale, sectors: Object.values(sectors) };
 }
 
@@ -434,7 +496,12 @@ export function mountGrowth(root, { onOpen } = {}) {
     const line = document.createElement('span');
     const due = nd.due != null && nd.due <= Date.now();
     line.textContent = `${when}${nd.reviews ? ` · ${nd.reviews} review${nd.reviews === 1 ? '' : 's'}` : ''}${due ? ' · due for review' : ''}`;
-    tip.append(b, meta, line);
+    const from = document.createElement('span');
+    from.className = 'growth-tip-from';
+    from.textContent = nd.parentTitle
+      ? `grew from ${nd.parentTitle} · ${{ similar: 'similar problem', pattern: 'same pattern', topics: 'shared topics', topic: 'same topic' }[nd.via]}`
+      : `first ${topicLabel(nd._topic)} problem`;
+    tip.append(b, meta, line, from);
     tip.hidden = false;
     const off = (stage.clientWidth - W) / 2;
     const sx = off + nd.x * s + tx + 16, sy = nd.y * s + ty - 10;
