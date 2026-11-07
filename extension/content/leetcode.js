@@ -409,10 +409,18 @@
   }
 
   // LeetCode shows the difficulty on the page; reading it there is instant.
+  // Class names have changed over the years (text-difficulty-*, text-sd-*,
+  // the old olive/yellow/pink), and after a submit the description panel can
+  // be gone entirely; then the background's catalog answers instead.
   function pageDifficulty() {
-    const el = document.querySelector('[class*="text-difficulty-"], [diff]');
-    const m = (el?.textContent || '').trim().match(/^(Easy|Medium|Hard)$/i);
-    return m ? m[1][0].toUpperCase() + m[1].slice(1).toLowerCase() : null;
+    const els = document.querySelectorAll(
+      '[class*="text-difficulty-"], [class*="text-sd-easy"], [class*="text-sd-medium"], [class*="text-sd-hard"], '
+      + '[diff], [class*="difficulty"], .text-olive, .text-yellow, .text-pink');
+    for (const el of els) {
+      const m = (el.textContent || '').trim().match(/^(Easy|Medium|Hard)$/i);
+      if (m) return m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
+    }
+    return null;
   }
   function showDifficulty(d) {
     const el = root?.querySelector('.lcanki-diff');
