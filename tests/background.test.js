@@ -12,12 +12,20 @@ import { eloP, priorBeta } from '../extension/lib/model.js';
 const store = {};
 let onMessage = null;
 const noop = { addListener() {} };
+const storageListeners = [];
 globalThis.chrome = {
-  storage: { local: {
-    get: async (k) => (typeof k === 'string' ? { [k]: structuredClone(store[k]) } : {}),
-    set: async (o) => { for (const [k, v] of Object.entries(o)) store[k] = structuredClone(v); },
-    remove: async (k) => { delete store[k]; },
-  } },
+  storage: {
+    local: {
+      get: async (k) => (typeof k === 'string' ? { [k]: structuredClone(store[k]) } : {}),
+      set: async (o) => {
+        const changes = {};
+        for (const [k, v] of Object.entries(o)) { changes[k] = { newValue: v }; store[k] = structuredClone(v); }
+        for (const f of storageListeners) f(changes, 'local');
+      },
+      remove: async (k) => { delete store[k]; },
+    },
+    onChanged: { addListener: (f) => storageListeners.push(f) },
+  },
   runtime: { onMessage: { addListener: (f) => { onMessage = f; } }, onInstalled: noop, onStartup: noop, getURL: (p) => p, id: 't' },
   webNavigation: { onHistoryStateUpdated: noop },
   alarms: { create() {}, clear: async () => true, onAlarm: noop },
@@ -297,6 +305,18 @@ test('★ star: set on a held solve, kept through Esc or a rating, shown on the 
   await send({ kind: 'grade', slug: 'coin-change', title: 'Coin Change', quality: 3, durationMs: 1000, url: 'https://leetcode.com/problems/coin-change/', factors: { startedAt: Date.now() - 1000 } });
   assert.equal(store.cards['coin-change'].starred, true, 'rating keeps the star');
   assert.equal((await send({ kind: 'setStar', slug: 'never-seen', starred: true })).ok, false);
+});
+
+test('the new tab\'s cached view is kept current in storage when data changes', async () => {
+  freshStore();
+  await acThenGrade({ startedAt: Date.now() - 60e3 });
+  await new Promise(r => setTimeout(r, 900));          // debounced refresh
+  const hc = store.homeCache;
+  assert.ok(hc?.ok && hc.view.ok, 'written without the page asking');
+  assert.ok(hc.view.problems.some(p => p.slug === 'two-sum'));
+  await send({ kind: 'setStar', slug: 'two-sum', starred: true });
+  await new Promise(r => setTimeout(r, 900));
+  assert.equal(store.homeCache.view.problems.find(p => p.slug === 'two-sum').starred, true, 'and refreshed after a change');
 });
 
 // ---- prep phases ----

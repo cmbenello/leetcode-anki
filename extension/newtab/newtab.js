@@ -344,9 +344,13 @@ let shownKey = null;
 function writeHomeCache(home) {
   try { localStorage.setItem(HOME_CACHE, JSON.stringify(home)); } catch (e) { /* full or blocked: just slower next time */ }
 }
-(function paintCached() {
-  let c = null;
-  try { c = JSON.parse(localStorage.getItem(HOME_CACHE) || 'null'); } catch (e) { return; }
+await (async function paintCached() {
+  // the background's copy is current; localStorage (this page's last answer)
+  // is the fallback if storage is slow to answer
+  let c = await Promise.race([window.__lcankiHome, new Promise(r => setTimeout(() => r(null), 80))]).catch(() => null);
+  if (!c?.goals?.ok || !c?.view?.ok) {
+    try { c = JSON.parse(localStorage.getItem(HOME_CACHE) || 'null'); } catch (e) { c = null; }
+  }
   if (!c?.goals?.ok || !c?.view?.ok) return;
   goalState = c.goals;
   renderPills();

@@ -1208,6 +1208,24 @@ async function savePhases(list) {
   return { ok: true, phases: r.phases };
 }
 
+// The new tab paints straight from a cached view. Keep that cache current
+// here — whenever anything the graph shows changes, recompute it (debounced)
+// into storage, which the page reads in its <head> without waking this
+// worker — so a tab opened right after a solve never flashes the old graph.
+const HOME_DEPS = ['cards', 'goals', 'activeGoal', 'phases', 'phasesMeta', 'meta', 'catalog'];
+let homeTimer = null;
+chrome.storage.onChanged?.addListener((changes, area) => {
+  if (area !== 'local' || !HOME_DEPS.some(k => k in changes)) return;
+  clearTimeout(homeTimer);
+  homeTimer = setTimeout(refreshHomeCache, 600);
+});
+async function refreshHomeCache() {
+  try {
+    const home = await getHome();
+    if (home?.ok) await chrome.storage.local.set({ homeCache: { ...home, at: Date.now() } });
+  } catch (e) { /* the page falls back to asking */ }
+}
+
 /** Everything the new-tab graph needs, in one round trip: goals + the active goal's view. */
 async function getHome() {
   const goals = await getGoalsWithProgress();
