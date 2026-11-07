@@ -10,8 +10,10 @@
 // extension already tracks. We read both, and send the union to the
 // background only when it changes. Read-only: nothing on NeetCode is touched.
 (() => {
-  if (window.__lcankiNeetcodeSync) return;
+  // one live copy; a copy cut off by an extension update makes way for the fresh one
+  if (window.__lcankiNeetcodeSync && window.__lcankiNeetcodeAlive?.()) return;
   window.__lcankiNeetcodeSync = true;
+  window.__lcankiNeetcodeAlive = () => { try { return !!chrome.runtime?.id; } catch (e) { return false; } };
 
   const KEYS = ['synced-progress-cache', 'completed-problem-list'];
   let lastSent = null;

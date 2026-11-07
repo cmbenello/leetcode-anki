@@ -2315,4 +2315,26 @@ function bootstrap() {
   ensureCatalog();
 }
 chrome.runtime.onInstalled.addListener(bootstrap);
+
+// An extension reload or update cuts every open LeetCode/NeetCode tab off
+// from the extension: the script already running there can't save anything
+// ("Extension context invalidated") until the tab is refreshed. So inject a
+// fresh copy into each open tab instead; the cut-off one goes quiet by itself.
+const CONTENT_URLS = ['https://leetcode.com/*', 'https://*.leetcode.com/*', 'https://neetcode.io/*', 'https://*.neetcode.io/*'];
+async function reattachContentScripts() {
+  if (!chrome.scripting) return;
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({ url: CONTENT_URLS }); } catch (e) { return; }
+  for (const tab of tabs) {
+    if (!tab.id || tab.discarded) continue;
+    const target = { tabId: tab.id };
+    try {
+      await chrome.scripting.executeScript({ target, files: ['content/inject.js'], world: 'MAIN' });   // no-op if already there
+      await chrome.scripting.insertCSS({ target, files: ['content/widget.css'] });
+      await chrome.scripting.executeScript({ target, files: ['content/leetcode.js'] });
+      if (/neetcode\.io/.test(tab.url || '')) await chrome.scripting.executeScript({ target, files: ['content/neetcode-sync.js'] });
+    } catch (e) { /* tab still loading, or not ours: the manifest covers it on its next load */ }
+  }
+}
+chrome.runtime.onInstalled.addListener((d) => { if (d.reason === 'install' || d.reason === 'update') reattachContentScripts(); });
 chrome.runtime.onStartup?.addListener(bootstrap);

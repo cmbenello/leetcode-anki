@@ -9,8 +9,16 @@
 //   6. Send grade events to the background worker
 
 (() => {
-  if (window.__lcanki_loaded) return;
+  // One live copy per tab. After an extension update the copy already running
+  // here is cut off from the extension ("Extension context invalidated") and
+  // the background injects a fresh one (background.js reattachContentScripts):
+  // let it in, and the cut-off copy goes quiet (see retire below).
+  if (window.__lcanki_loaded && window.__lcanki_alive?.()) return;
   window.__lcanki_loaded = true;
+  window.__lcanki_alive = () => { try { return !!chrome.runtime?.id; } catch (e) { return false; } };
+  // Stamp the page so a cut-off older copy knows a live one is here.
+  const MY_START = Date.now();
+  document.documentElement.setAttribute('data-lcanki-live', String(MY_START));
 
   // Esc closes the modal. Attached once at script load, on window with
   // capture so Monaco/LeetCode handlers can't swallow it.
@@ -41,8 +49,39 @@
   // open tab is cut off from the extension. It must not keep showing its old
   // popup or grabbing keys: it removes itself, and the refreshed tab has the new one.
   const orphaned = () => { try { return !chrome.runtime?.id; } catch (e) { return true; } };
+  // A cut-off copy stops doing anything: no popup, no keys, no failed saves.
+  let retired = false;
+  function retire() {
+    if (retired) return true;
+    if (!orphaned()) return false;
+    retired = true;
+    try { root?.remove(); } catch (e) {}
+    try { clearInterval(timerHandle); } catch (e) {}
+    try { submitObserver?.disconnect(); } catch (e) {}
+    return true;
+  }
+  // ...unless it's the only copy left when you get Accepted: then say so,
+  // rather than losing the solve silently.
+  function showUpdateNotice() {
+    const live = Number(document.documentElement.getAttribute('data-lcanki-live')) || 0;
+    if (live > MY_START || document.getElementById('lcanki-update')) return;   // a fresh copy has it
+    const el = document.createElement('div');
+    el.id = 'lcanki-update';
+    el.setAttribute('style', 'position:fixed;left:50%;top:45%;transform:translate(-50%,-50%);z-index:2147483647;'
+      + 'display:flex;align-items:center;gap:14px;padding:14px 16px 14px 20px;border-radius:14px;'
+      + 'background:#1c1d20;border:1px solid rgba(206,210,217,.16);box-shadow:0 18px 50px rgba(0,0,0,.5);'
+      + 'font:500 14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:rgba(236,239,244,.95)');
+    const msg = document.createElement('span');
+    msg.textContent = 'LeetCode Anki was updated. Refresh to record this solve.';
+    const btn = document.createElement('button');
+    btn.textContent = 'Refresh';
+    btn.setAttribute('style', 'font:inherit;padding:6px 14px;border-radius:9px;border:0;cursor:pointer;background:rgba(236,239,244,.92);color:#17181b');
+    btn.addEventListener('click', () => location.reload());
+    el.append(msg, btn);
+    document.body.appendChild(el);
+  }
   window.addEventListener('keydown', (e) => {
-    if (orphaned()) { root?.remove(); return; }
+    if (retire()) return;
     if (!root || root.classList.contains('lcanki-hidden')) return;
     if (e.key === 'Escape' || e.key === 'Esc') {
       e.preventDefault();
@@ -298,6 +337,10 @@
   // ---- shared commit ----
   function commitSubmission({ status, id, slug, source, detail }) {
     if (!status) return;
+    if (retire()) {
+      if (/accepted/i.test(status) && (!slug || slug === currentSlug())) showUpdateNotice();
+      return;
+    }
     // Snapshot everything NOW. The old code read currentSlug()/currentTitle()
     // after an await, so a quick navigation re-filed the verdict under the
     // next problem.
@@ -379,7 +422,7 @@
     el.dataset.level = (d || '').toLowerCase();
   }
   function showPanel() {
-    if (orphaned()) { root?.remove(); return; }
+    if (retire()) return;
     if (!root) ensureRoot();
     setTitle(currentTitle());
     showDifficulty(pageDifficulty());
