@@ -4,7 +4,8 @@
 //   arcs       topics — fixed order, each arc sized by how many you've done
 //   position   along a topic's arc, problems follow the "built on" tree
 //              (depth-first leaf order, as in hierarchical edge bundling), so
-//              a problem sits beside the one it built on — even across rings
+//              a problem sits beside the one it built on — even across rings;
+//              each ring then spreads its own dots so neighbours never touch
 //   links      "built on" links bow inward inside their topic; links between
 //              topics are bundled through the middle (Holten, "Hierarchical
 //              Edge Bundles", 2006), kept faint
@@ -103,6 +104,29 @@ export function difficultyScore(p) {
 const ringOf = (p) => (p.difficulty === 'Easy' ? 0 : p.difficulty === 'Hard' ? 2 : 1);
 const DAY = 86400000;
 
+/**
+ * Positions as close as possible (least squares) to `ideal` (ascending), at
+ * least `g` apart, inside [lo, hi]: isotonic regression (pool adjacent
+ * violators) on ideal[i] − i·g, clamped. O(n). Exported for tests.
+ */
+export function spread(ideal, g, lo, hi) {
+  const blocks = [];
+  ideal.forEach((v, i) => {
+    let b = { sum: v - i * g, cnt: 1 };
+    while (blocks.length && blocks[blocks.length - 1].sum / blocks[blocks.length - 1].cnt >= b.sum / b.cnt) {
+      const prev = blocks.pop();
+      b = { sum: prev.sum + b.sum, cnt: prev.cnt + b.cnt };
+    }
+    blocks.push(b);
+  });
+  const top = hi - (ideal.length - 1) * g, out = [];
+  for (const b of blocks) {
+    const q = Math.max(lo, Math.min(top, b.sum / b.cnt));
+    for (let k = 0; k < b.cnt; k++) out.push(q + out.length * g);
+  }
+  return out;
+}
+
 /** Pure layout: problems -> positioned nodes, rings, arcs, links. Exported for tests. */
 export function layout(problems, { size, width = size, height = size, target, now = Date.now() }) {
   const cx = width / 2, cy = height / 2;
@@ -110,19 +134,25 @@ export function layout(problems, { size, width = size, height = size, target, no
   const r0 = Math.max(80, height * 0.11);                      // room for the goal text
   const n = problems.length;
   const scale = Math.max(1, Math.min(1.8, R / 254));
-  const rings = [0.3, 0.62, 0.92].map(f => r0 + (R - r0) * f);
+  const rings = [0.42, 0.76, 0.97].map(f => r0 + (R - r0) * f);
+  // centre-to-centre spacing a ring aims for; a crowded ring settles for even spacing
+  const SPACING = 2.6 * 2.8 * Math.sqrt(scale) + 2;
+  const ringGap = [Infinity, Infinity, Infinity];
 
-  // topic arcs, sized by count (with a floor so small topics stay legible)
-  const counts = {};
+  // topic arcs, sized by the topic's most crowded ring (dots per unit of
+  // circumference), so no topic's inner ring ends up packed tighter than the
+  // rest; a floor keeps small topics legible
+  const counts = {}, perRingCount = {};
   for (const p of problems) {
     p._topic = primaryTopic(p.tags);
     counts[p._topic] = (counts[p._topic] || 0) + 1;
+    (perRingCount[p._topic] ??= [0, 0, 0])[ringOf(p)] += 1;
   }
   const present = DISPLAY.filter(t => counts[t]);
   const maxCount = Math.max(1, ...present.map(t => counts[t]));
   const GAP = present.length > 1 ? 0.035 : 0;
   const usable = TAU - GAP * present.length;
-  const wts = present.map(t => Math.max(counts[t], 4));
+  const wts = present.map(t => Math.max(3 / rings[1], ...perRingCount[t].map((c, j) => c / rings[j])));
   const wsum = wts.reduce((a, b) => a + b, 0) || 1;
   const sectors = {};
   let a = -Math.PI / 2 + GAP / 2;
@@ -165,21 +195,32 @@ export function layout(problems, { size, width = size, height = size, target, no
       const kids = [...it.kids].sort((x, y) => sizeOf(y) - sizeOf(x) || y.k - x.k);   // popped smallest-first
       for (const c of kids) stack.push(c);
     }
-    // place: angle from the tree order across the topic's arc; radius is
-    // exactly the difficulty ring — one layer per ring, packed as tight as it
-    // gets (dense topics simply jam together)
+    // place: each problem's ideal angle comes from the tree order across the
+    // topic's arc; then each ring spreads its own dots — as close to those
+    // angles as it can, never closer than SPACING (or evenly, when full).
+    // Radius is exactly the difficulty ring: one layer per ring.
     const step = sec.span / Math.max(1, order.length);
-    order.forEach((it, i) => {
+    const perRing = [[], [], []];
+    order.forEach((it, i) => { it.ideal = sec.start + step * (i + 0.5); perRing[ringOf(it.p)].push(it); });
+    perRing.forEach((list, ring) => {
+      if (!list.length) return;
+      const r = rings[ring];
+      const g = Math.min(SPACING / r, sec.span / list.length);
+      const angs = spread(list.map(it => it.ideal), g, sec.start + g / 2, sec.start + sec.span - g / 2);
+      list.forEach((it, j) => { it.ang = angs[j]; });
+      ringGap[ring] = Math.min(ringGap[ring], g * r);
+    });
+    order.forEach((it) => {
       const p = it.p;
       const ring = ringOf(p);
-      const ang = sec.start + step * (i + 0.5);
+      const ang = it.ang;
       const r = rings[ring];
       const age = now - p.t;
       const sameDay = new Date(p.t).toDateString() === new Date(now).toDateString();
       const node = {
         ...p, k: it.k, r, ang, ring, x: cx + Math.cos(ang) * r, y: cy + Math.sin(ang) * r,
         via: it.via, parentTitle: it.parent ? it.parent.p.title : null,
-        dot: (p.difficulty === 'Hard' ? 3.1 : p.difficulty === 'Easy' ? 2.5 : 2.8) * Math.sqrt(scale),
+        dot: 0,                                    // set below, once every ring is placed
         sec: topic,
         tone: p.undated ? 'old' : sameDay ? 'today' : age < 7 * DAY ? 'recent' : age < 60 * DAY ? 'mid' : 'old',
       };
@@ -188,6 +229,11 @@ export function layout(problems, { size, width = size, height = size, target, no
       nodes.push(node);
     });
   }
+  // one dot size for every ring, shrunk just enough that the tightest
+  // neighbours still show a gap
+  const tight = Math.min(...ringGap);
+  const base = Math.min(2.8 * Math.sqrt(scale), Math.max(1.8, (tight - 2.2) / 2));
+  for (const nd of nodes) nd.dot = base * (nd.ring === 0 ? 0.92 : nd.ring === 2 ? 1.1 : 1);
   const index = new Map(nodes.map((nd, i) => [nd, i]));
   for (const it of items) {
     it.node.par = it.parent ? index.get(it.parent.node) : -1;
@@ -496,14 +542,18 @@ export function mountGrowth(root, { onOpen } = {}) {
   addEventListener('scroll', clearHover, { passive: true });
   addEventListener('blur', clearHover);
   document.addEventListener('visibilitychange', clearHover);
+  document.addEventListener('mouseout', (e) => { if (!e.relatedTarget) clearHover(); });   // left the window
   document.addEventListener('pointermove', (e) => { if (hover && e.target !== canvas && !drag) clearHover(); }, { passive: true });
 
   function nodeAt(mx, my) {
     const x = (mx - tx) / s, y = (my - ty) / s;
-    let best = null, bd = 12 / s;
+    // the dot itself plus a few pixels: anything looser keeps a card up
+    // while you're plainly between dots
+    const k = Math.sqrt(s);
+    let best = null, bd = Infinity;
     for (const nd of L.nodes) {
       const d = Math.hypot(nd.x - x, nd.y - y);
-      if (d < bd) { bd = d; best = nd; }
+      if (d <= nd.dot / k + 4 / s && d < bd) { bd = d; best = nd; }
     }
     return best;
   }

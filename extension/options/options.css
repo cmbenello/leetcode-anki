@@ -1,3 +1,6 @@
+/* `hidden` always hides: a class that sets display must never win over the hidden attribute. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;

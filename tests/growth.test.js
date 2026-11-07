@@ -1,7 +1,7 @@
 // Run with:  node tests/growth.test.js
 // The growth view's layout is pure; these pin down how problems are placed and linked.
 import assert from 'node:assert/strict';
-import { layout, relate, primaryTopic, difficultyScore } from '../extension/newtab/growth.js';
+import { layout, relate, primaryTopic, difficultyScore, spread } from '../extension/newtab/growth.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -95,6 +95,32 @@ test('rings: one layer per ring — dense topics jam together, never stack', () 
   const probs = Array.from({ length: 400 }, (_, i) => P(`p${i}`, ['dynamic-programming'], { difficulty: 'Medium' }, i));
   const L = layout(probs, { ...OPTS, target: 400 });
   for (const nd of L.nodes) assert.ok(Math.abs(nd.r - L.rings[1]) < 1e-6, 'every Medium sits exactly on the medium ring');
+});
+
+test('spread: keeps free dots where they want to be, pushes crowded ones apart', () => {
+  assert.deepEqual(spread([1, 5, 9], 2, 0, 10), [1, 5, 9]);
+  const out = spread([4, 4.1, 4.2], 1, 0, 10);
+  for (let i = 1; i < out.length; i++) assert.ok(out[i] - out[i - 1] >= 1 - 1e-9);
+  assert.ok(Math.abs(out[1] - 4.1) < 1e-9, 'a crowded cluster centres on its ideal spot');
+  const edge = spread([0, 0, 0], 1, 0, 10);
+  assert.deepEqual(edge, [0, 1, 2], 'and stays inside its bounds');
+});
+
+test('rings: at 400 problems, neighbours on a ring never touch', () => {
+  const tags = [['dynamic-programming'], ['graph'], ['array', 'two-pointers'], ['tree'], ['binary-search'], ['string'], ['hash-table'], ['array']];
+  const diffs = ['Easy', 'Medium', 'Medium', 'Hard', 'Medium', 'Easy', 'Medium'];
+  const probs = Array.from({ length: 400 }, (_, i) => P(`p${i}`, tags[(i * 5) % tags.length], { difficulty: diffs[i % diffs.length] }, i));
+  const L = layout(probs, { width: 1440, height: 860, target: 400, now: NOW });
+  let worst = Infinity;
+  for (const sec of L.sectors) for (const ring of [0, 1, 2]) {
+    const on = sec.nodes.filter(nd => nd.ring === ring).sort((a, b) => a.ang - b.ang);
+    for (let i = 1; i < on.length; i++) {
+      const gap = Math.hypot(on[i].x - on[i - 1].x, on[i].y - on[i - 1].y) - on[i].dot - on[i - 1].dot;
+      worst = Math.min(worst, gap);
+    }
+  }
+  assert.ok(worst >= 2, `closest neighbours ${worst.toFixed(2)}px apart`);
+  console.log(`       (closest neighbours: ${worst.toFixed(1)}px apart)`);
 });
 
 test('layout of 600 problems is fast', () => {

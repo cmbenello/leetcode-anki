@@ -1,3 +1,7 @@
+/* `hidden` always hides: theme rules below set display on things the code hides (the hover card
+   kept showing the last problem because a glass rule out-ranked .growth-tip[hidden]). */
+[hidden] { display: none !important; }
+
 /* Calm, neutral dark. The only "jungle" is the goal growth view in the
    centre; everything else stays quiet so it can carry the page. */
 /* Themes. Every colour on the page AND in the growth canvas comes from these
