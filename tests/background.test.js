@@ -281,18 +281,25 @@ test('prep phases: grouped by LOCAL first-solve day; outside a phase or undated 
   assert.deepEqual(v.phases.map(p => [p.name, p.count]), [['Company A', 1], ['Company B', 1], ['Unstructured', 3]]);
 });
 
-test('prep phases: first run seeds from data/phases.local.json, and only once', async () => {
+test('prep phases: seeded from data/phases.local.json; a newer seed replaces unedited phases, never edited ones', async () => {
   freshStore();
-  localSeed = { phases: [{ name: 'Seeded', from: '2026-01-01', to: '2026-02-01' }] };
+  localSeed = { version: 1, phases: [{ name: 'Seeded', from: '2026-01-01', to: '2026-02-01' }] };
   try {
     let r = await send({ kind: 'getPhases' });
     assert.deepEqual(r.phases.map(p => p.name), ['Seeded']);
-    localSeed = { phases: [{ name: 'Changed', from: '2026-03-01' }] };
+    localSeed = { version: 1, phases: [{ name: 'Same version', from: '2026-03-01' }] };
     r = await send({ kind: 'getPhases' });
-    assert.deepEqual(r.phases.map(p => p.name), ['Seeded'], 'stored phases win over the seed file');
+    assert.deepEqual(r.phases.map(p => p.name), ['Seeded'], 'same seed version: stored phases stay');
+    localSeed = { version: 2, phases: [{ name: 'Better guess', from: '2026-03-01' }] };
+    r = await send({ kind: 'getPhases' });
+    assert.deepEqual(r.phases.map(p => p.name), ['Better guess'], 'newer seed replaces an unedited list');
+    await send({ kind: 'savePhases', phases: [{ name: 'Mine', from: '2026-04-01' }] });
+    localSeed = { version: 3, phases: [{ name: 'Even newer', from: '2026-05-01' }] };
+    r = await send({ kind: 'getPhases' });
+    assert.deepEqual(r.phases.map(p => p.name), ['Mine'], 'edits are never overwritten');
     await send({ kind: 'savePhases', phases: [] });
     r = await send({ kind: 'getPhases' });
-    assert.deepEqual(r.phases, [], 'deleting them all is respected, not re-seeded');
+    assert.deepEqual(r.phases, [], 'deleting them all is respected too');
   } finally { localSeed = null; }
   freshStore();
   assert.deepEqual((await send({ kind: 'getPhases' })).phases, [], 'no seed file: no phases');

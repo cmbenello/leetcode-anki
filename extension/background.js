@@ -1146,16 +1146,25 @@ function backfillSimilar(cards) {
 // edited in Options. The very first time, a personal seed can come from
 // data/phases.local.json (git-ignored; format in data/phases.example.json),
 // so your own timeline never lands in the repo.
-async function loadPhases() {
-  const raw = await getPhasesRaw();
-  if (raw !== undefined) return normalizePhases(raw);
-  let seed = [];
+// The seed file carries a version: a newer seed replaces phases that came
+// from an older seed, but never ones you've edited in Options.
+const PHASES_META = 'phasesMeta';              // { seedVersion, edited }
+async function readPhaseSeed() {
   try {
     const r = await fetch(chrome.runtime.getURL('data/phases.local.json'));
-    if (r.ok) seed = (await r.json()).phases || [];
-  } catch (e) { /* no seed file: start with none */ }
-  const phases = normalizePhases(seed);
+    if (r.ok) { const j = await r.json(); return { version: Number(j.version) || 1, phases: j.phases || [] }; }
+  } catch (e) { /* no seed file */ }
+  return null;
+}
+async function loadPhases() {
+  const raw = await getPhasesRaw();
+  const meta = (await chrome.storage.local.get(PHASES_META))[PHASES_META] || {};
+  if (raw !== undefined && meta.edited) return normalizePhases(raw);
+  const seed = await readPhaseSeed();
+  if (raw !== undefined && !(seed && seed.version > (meta.seedVersion || 0))) return normalizePhases(raw);
+  const phases = normalizePhases(seed?.phases || []);
   await setPhases(phases);
+  await chrome.storage.local.set({ [PHASES_META]: { seedVersion: seed?.version || 0, edited: false } });
   return phases;
 }
 
@@ -1163,6 +1172,8 @@ async function savePhases(list) {
   const r = validatePhases(list);
   if (!r.ok) return r;
   await setPhases(r.phases);
+  const meta = (await chrome.storage.local.get(PHASES_META))[PHASES_META] || {};
+  await chrome.storage.local.set({ [PHASES_META]: { ...meta, edited: true } });
   return { ok: true, phases: r.phases };
 }
 
