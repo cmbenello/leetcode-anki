@@ -295,7 +295,7 @@ function noise(i) {
  * Returns the tree (xs, ys, par), each point's attachment node (leaf), and
  * how many points each node feeds (for the pipe model).
  */
-export function colonize(points, root, { D, dk, maxIter }) {
+export function colonize(points, root, { D, dk, maxIter, wander = 0.2 }) {
   const xs = [root.x], ys = [root.y], par = [-1];
   const n = points.length;
   const near = new Int32Array(n);
@@ -321,7 +321,7 @@ export function colonize(points, root, { D, dk, maxIter }) {
     const fresh = [];
     for (const [v, [ax, ay]] of pull) {
       let a = Math.hypot(ax, ay) < 1e-6 ? noise(v) * TAU : Math.atan2(ay, ax);
-      a += (noise(xs.length * 7 + v) - 0.5) * 0.2;
+      a += (noise(xs.length * 7 + v) - 0.5) * wander;
       const nx = xs[v] + Math.cos(a) * D, ny = ys[v] + Math.sin(a) * D;
       const key = `${Math.round(nx / cell)},${Math.round(ny / cell)}`;
       if (taken.has(key)) continue;
