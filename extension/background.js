@@ -145,6 +145,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse(await getRecommendations(msg.id, msg.k));
           break;
         }
+        case 'dismissRating': {
+          sendResponse(await dismissRating(msg.slug));
+          break;
+        }
         case 'neetcodeProgress': {
           sendResponse(await mergeNeetcodeProgress(msg.slugs || [], !!msg.account));
           break;
@@ -311,7 +315,20 @@ async function handleGrade({ slug, title, quality, durationMs, readingMs, coding
     pPred = Math.round(predict(st, item, asOf).p * 1000) / 1000;
   } catch (e) { /* prediction is best-effort */ }
   const site = siteFromUrl(url);
-  const existing = (await getCard(slug)) ?? newCard(slug, title, site);
+  let existing = await getCard(slug);
+  if (!existing) {
+    // first rating: promote what was held for this problem into a real card
+    const pend = await getPending();
+    const held = pend[slug];
+    existing = newCard(slug, held?.title || title, site);
+    if (held) {
+      existing.submissions = held.submissions;
+      if (held.url) existing.lastUrl = held.url;
+      if (held.code != null) { existing.pendingCode = held.code; existing.pendingLang = held.lang; }
+      delete pend[slug];
+      await setPending(pend);
+    }
+  }
   existing.title = bestTitle(slug, existing.title, title, await getMeta(slug), site);
   existing.site = site;
   if (url) existing.lastUrl = normalizeProblemUrl(url);
@@ -368,9 +385,30 @@ async function handleGrade({ slug, title, quality, durationMs, readingMs, coding
   return { ok: true, prevIntervalMin, nextIntervalMin, syncError };
 }
 
+// Submissions for a problem you don't track yet wait here until you rate it.
+// Rating turns them into a card; dismissing the rating (Esc / ×) throws them
+// away — before, the card was created on the Accepted verdict, so closing
+// the rating bar still left a card behind.
+const PENDING_KEY = 'pendingProblems';
+async function getPending() { return (await chrome.storage.local.get(PENDING_KEY))[PENDING_KEY] || {}; }
+async function setPending(p) {
+  const cutoff = Date.now() - 14 * 864e5;                 // forget stale ones
+  for (const [k, v] of Object.entries(p)) if ((v.at || 0) < cutoff) delete p[k];
+  await chrome.storage.local.set({ [PENDING_KEY]: p });
+}
+async function dismissRating(slug) {
+  if (!slug || (await getCard(slug))) return { ok: true, kept: true };   // tracked problems keep their history
+  const pend = await getPending();
+  const had = !!pend[slug];
+  delete pend[slug];
+  await setPending(pend);
+  return { ok: true, discarded: had };
+}
+
 async function recordSubmissionEvent({ slug, title, url, status, submissionId, source, detail, code, language }) {
   if (!slug || !status) return { ok: false, error: 'missing slug or status' };
   const prior = await getCard(slug);
+  if (!prior) return holdSubmission({ slug, title, url, status, submissionId, source, detail, code, language });
   // url is null when the verdict landed after you navigated to another
   // problem — keep the card's known site instead of guessing from nothing.
   const site = url ? siteFromUrl(url) : (prior?.site || 'leetcode');
@@ -410,6 +448,26 @@ async function recordSubmissionEvent({ slug, title, url, status, submissionId, s
 
   ensureMeta(slug).catch(() => {});
   return { ok: true };
+}
+
+async function holdSubmission({ slug, title, url, status, submissionId, source, detail, code, language }) {
+  const pend = await getPending();
+  const p = pend[slug] || { title, site: url ? siteFromUrl(url) : 'leetcode', url: null, submissions: [] };
+  const id = submissionId ? String(submissionId) : null;
+  if (id && p.submissions.some(x => x.id === id)) return { ok: true, duplicate: true, pending: true };
+  const entry = { t: Date.now(), status, source: source || 'dom' };
+  if (id) entry.id = id;
+  if (detail?.runtime) entry.runtime = detail.runtime;
+  if (detail?.memory) entry.memory = detail.memory;
+  p.submissions.push(entry);
+  if (title) p.title = bestTitle(slug, p.title, title, await getMeta(slug), p.site);
+  if (url) p.url = normalizeProblemUrl(url);
+  if (/accepted/i.test(status) && code != null) { p.code = code; p.lang = language ?? null; }
+  p.at = Date.now();
+  pend[slug] = p;
+  await setPending(pend);
+  ensureMeta(slug).catch(() => {});
+  return { ok: true, pending: true };
 }
 
 async function deleteCardBySlug(slug) {

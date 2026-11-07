@@ -5,10 +5,14 @@
 //   distance   progress toward the goal: the k-th problem you solved sits at
 //              r0 + (R − r0)·√(k/target), so the tree's AREA grows with your
 //              count and the growth front reaches the goal ring at 100%
-//   edges      each problem grows from the earlier problem in its topic it's
-//              MOST RELATED to: a LeetCode "similar question" first, then the
-//              closest match on topics and NeetCode pattern (see relate()).
-//              Drawn as a radial dendrogram, so subtrees never cross.
+//   placement  related problems sit near each other: each problem is placed
+//              in the wedge of the earlier problem it's most related to (a
+//              LeetCode "similar question" first, then topics/pattern)
+//   branches   grown by SPACE COLONIZATION (Runions, Lane & Prusinkiewicz,
+//              2007): each topic grows from the inner ring toward its
+//              problems, so nearby problems share limbs and branching is
+//              gradual; thickness follows the PIPE MODEL (a segment's width
+//              grows with √ of the problems it feeds)
 //   nodes      one per problem; size = difficulty, brighter = more recent
 //
 // One colour, flat, no effects. Zoom with a pinch or ⌘/Ctrl+scroll, drag to
@@ -190,34 +194,20 @@ export function layout(problems, { size, width = size, height = size, target, no
     }
   }
 
-  // Pass 3 — positions and edges. Distance from the centre is still solve
-  // order. An edge leaves its parent sideways near the parent's own radius,
-  // then runs straight out to the child (the dendrogram "elbow").
+  // Pass 3 — positions. Distance from the centre is solve order (±3% jitter);
+  // the angle comes from the relatedness wedges, so related problems cluster.
   const nodes = [];
   for (const it of items) {
     const { p, k } = it;
     const sec = sectors[p._topic];
-    const r0k = r0 + (R - r0) * Math.sqrt((k + 1) / T);
+    const r = (r0 + (R - r0) * Math.sqrt((k + 1) / T)) * (1 + (hash01(p.slug + 'r') - 0.5) * 0.06);
     const ang = it.ang;
     const par = it.parent?.node || null;
-    const pr = par ? par.r : r0 - 8;
-    // ±3% radial jitter for variety, never inward of the parent
-    const r = Math.max(pr + 3, r0k * (1 + (hash01(p.slug + 'r') - 0.5) * 0.06));
-    const x = cx + Math.cos(ang) * r, y = cy + Math.sin(ang) * r;
-    const pa = par ? par.ang : ang;
-    const px = cx + Math.cos(pa) * pr, py = cy + Math.sin(pa) * pr;
-    // elbow height and a slight sideways bend vary per edge
-    const er = pr + (r - pr) * (0.08 + 0.3 * hash01(p.slug + 'e'));
-    const qa = ang + (hash01(p.slug + 'b') - 0.5) * 0.14;
-    const qx = cx + Math.cos(qa) * er, qy = cy + Math.sin(qa) * er;
     const age = now - p.t;
     const sameDay = new Date(p.t).toDateString() === new Date(now).toDateString();
     const node = {
-      ...p, k, r, ang, x, y, px, py, qx, qy, pr,
+      ...p, k, r, ang, x: cx + Math.cos(ang) * r, y: cy + Math.sin(ang) * r,
       via: it.via, parentTitle: par ? par.title : null,
-      // edge width bucket: thick near the centre, thinner toward the edge
-      wb: Math.min(3, Math.floor(Math.max(0, (pr - r0) / (R - r0 || 1)) * 4)),
-      vb: Math.min(2, Math.floor(hash01(p.slug + 'w') * 3)),      // width variance bucket
       dot: (p.difficulty === 'Hard' ? 3.7 : p.difficulty === 'Easy' ? 2.6 : 3.1) * Math.sqrt(scale),
       sec: p._topic,
       tone: p.undated ? 'old' : sameDay ? 'today' : age < 7 * DAY ? 'recent' : age < 60 * DAY ? 'mid' : 'old',
@@ -226,6 +216,16 @@ export function layout(problems, { size, width = size, height = size, target, no
     sec.nodes.push(node);
     nodes.push(node);
   }
+
+  // Pass 3b — branches, grown by space colonization (see colonize()). One
+  // tree per topic, rooted on the inner ring at the topic's centre angle.
+  const D = 5.5 * Math.min(scale, 1.4);
+  for (const sec of Object.values(sectors)) {
+    const root = { x: cx + Math.cos(sec.mid) * (r0 - 4), y: cy + Math.sin(sec.mid) * (r0 - 4) };
+    sec.tree = colonize(sec.nodes, root, { D, dk: D * 1.7, maxIter: Math.ceil(((R - r0) / D) * 3) + 30 });
+    sec.nodes.forEach((nd, i) => { nd.leaf = sec.tree.leaf[i]; });
+  }
+
   // Pass 4 — cross-topic links. A problem that also belongs to other topics
   // (by its tags, or a LeetCode similar question placed in another topic)
   // gets a super-faint link to the most related problem over there.
@@ -275,8 +275,80 @@ export function layout(problems, { size, width = size, height = size, target, no
   return { cx, cy, R, r0, T, n, nodes, scale, crossLinks, sectors: Object.values(sectors) };
 }
 
-const EDGE_WIDTH = [1.6, 1.3, 1.05, 0.85];  // by depth bucket, before scale
-const WIDTH_VARIANCE = [0.75, 1, 1.25];       // per-edge variety
+// Deterministic noise in [0, 1) for a small amount of natural wander.
+function noise(i) {
+  let h = Math.imul(i | 0, 2654435761);
+  h ^= h >>> 15; h = Math.imul(h, 2246822519); h ^= h >>> 13;
+  return ((h >>> 0) % 10000) / 10000;
+}
+
+/**
+ * Space colonization (Runions, Lane & Prusinkiewicz, "Modeling Trees with a
+ * Space Colonization Algorithm", 2007). Grows a tree from `root` toward the
+ * attraction `points` (the problems):
+ *   1. each unreached point pulls on its NEAREST tree node;
+ *   2. every pulled node grows one segment of length D along the average of
+ *      its pulls (plus a little wander);
+ *   3. a point is reached — removed — once a node is within the kill distance.
+ * Points close together pull on the same nodes, so they share a limb until
+ * they diverge: branching is gradual, not one fork per point.
+ * Returns the tree (xs, ys, par), each point's attachment node (leaf), and
+ * how many points each node feeds (for the pipe model).
+ */
+export function colonize(points, root, { D, dk, maxIter }) {
+  const xs = [root.x], ys = [root.y], par = [-1];
+  const n = points.length;
+  const near = new Int32Array(n);
+  const dist = new Float64Array(n);
+  const leaf = new Int32Array(n).fill(-1);
+  let left = 0;
+  for (let i = 0; i < n; i++) {
+    dist[i] = Math.hypot(points[i].x - root.x, points[i].y - root.y);
+    if (dist[i] < dk) leaf[i] = 0; else left += 1;
+  }
+  const cell = D * 0.45;                        // never grow two nodes on one spot
+  const taken = new Set([`${Math.round(root.x / cell)},${Math.round(root.y / cell)}`]);
+  for (let it = 0; it < maxIter && left > 0; it++) {
+    const pull = new Map();
+    for (let i = 0; i < n; i++) {
+      if (leaf[i] >= 0) continue;
+      const v = near[i];
+      const dx = points[i].x - xs[v], dy = points[i].y - ys[v];
+      const d = Math.hypot(dx, dy) || 1;
+      const acc = pull.get(v);
+      if (acc) { acc[0] += dx / d; acc[1] += dy / d; } else pull.set(v, [dx / d, dy / d]);
+    }
+    const fresh = [];
+    for (const [v, [ax, ay]] of pull) {
+      let a = Math.hypot(ax, ay) < 1e-6 ? noise(v) * TAU : Math.atan2(ay, ax);
+      a += (noise(xs.length * 7 + v) - 0.5) * 0.2;
+      const nx = xs[v] + Math.cos(a) * D, ny = ys[v] + Math.sin(a) * D;
+      const key = `${Math.round(nx / cell)},${Math.round(ny / cell)}`;
+      if (taken.has(key)) continue;
+      taken.add(key);
+      xs.push(nx); ys.push(ny); par.push(v);
+      fresh.push(xs.length - 1);
+    }
+    if (!fresh.length) break;
+    for (let i = 0; i < n; i++) {
+      if (leaf[i] >= 0) continue;
+      for (const f of fresh) {
+        const d = Math.hypot(points[i].x - xs[f], points[i].y - ys[f]);
+        if (d < dist[i]) { dist[i] = d; near[i] = f; }
+      }
+      if (dist[i] < dk) { leaf[i] = near[i]; left -= 1; }
+    }
+  }
+  for (let i = 0; i < n; i++) if (leaf[i] < 0) leaf[i] = near[i];   // unreached: join the nearest branch
+  // pipe model: how many problems each node feeds (children index > parent)
+  const feeds = new Int32Array(xs.length);
+  for (let i = 0; i < n; i++) feeds[leaf[i]] += 1;
+  for (let j = xs.length - 1; j > 0; j--) feeds[par[j]] += feeds[j];
+  return { xs, ys, par, leaf, feeds };
+}
+
+/** Pipe model: width grows with √(problems fed), so trunks are thick, twigs thin. */
+export const branchWidth = (feeds, scale = 1) => Math.min(3.4, 0.5 + 0.42 * Math.sqrt(feeds)) * Math.min(scale, 1.2);
 
 function crossPath(path, L, a, b) {
   const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
@@ -295,7 +367,6 @@ function buildPaint(L) {
     // Lines stay neutral silver; only the dots carry the topic's colour,
     // brighter the more you've solved in that topic (recent ones a touch more).
     bySec[sec.topic] = {
-      edges: EDGE_WIDTH.map(() => WIDTH_VARIANCE.map(() => new Path2D())),
       tone: {
         old: hsla(sec.hue, 58 + 10 * I, 0.38 + 0.5 * I),
         mid: hsla(sec.hue, 61 + 10 * I, 0.44 + 0.5 * I),
@@ -304,11 +375,26 @@ function buildPaint(L) {
       },
     };
   }
-  for (const nd of L.nodes) {
-    const p = bySec[nd.sec].edges[nd.wb][nd.vb];
-    p.moveTo(nd.px, nd.py);
-    p.quadraticCurveTo(nd.qx, nd.qy, nd.x, nd.y);
+  // branch segments, batched by (rounded) width
+  const buckets = new Map();
+  const add = (w, x1, y1, x2, y2) => {
+    const b = Math.round(w * 5) / 5;
+    let p = buckets.get(b);
+    if (!p) buckets.set(b, (p = new Path2D()));
+    p.moveTo(x1, y1);
+    p.lineTo(x2, y2);
+  };
+  for (const sec of L.sectors) {
+    const t = sec.tree;
+    for (let j = 1; j < t.xs.length; j++) {
+      add(branchWidth(t.feeds[j], L.scale), t.xs[t.par[j]], t.ys[t.par[j]], t.xs[j], t.ys[j]);
+    }
+    sec.nodes.forEach((nd, i) => {               // last little twig out to the dot
+      const l = t.leaf[i];
+      add(branchWidth(1, L.scale), t.xs[l], t.ys[l], nd.x, nd.y);
+    });
   }
+  bySec.__branches = [...buckets.entries()];
   // cross-topic links bow toward the centre, like a chord diagram
   const cross = new Path2D();
   for (const { a, b } of L.crossLinks) crossPath(cross, L, a, b);
@@ -409,13 +495,10 @@ export function mountGrowth(root, { onOpen } = {}) {
     ctx.stroke(edges.__cross);
 
     ctx.strokeStyle = COLORS.edge;
-    for (const sec of L.sectors) {
-      const paint = edges[sec.topic];
-      paint.edges.forEach((byVar, i) => byVar.forEach((path, v) => {
-        // line weight barely grows with canvas size (dots and spacing do)
-        ctx.lineWidth = EDGE_WIDTH[i] * WIDTH_VARIANCE[v] * Math.min(L.scale, 1.2) / k;
-        ctx.stroke(path);
-      }));
+    ctx.lineJoin = 'round';
+    for (const [w, path] of edges.__branches) {
+      ctx.lineWidth = w / k;
+      ctx.stroke(path);
     }
 
     // nodes: one fill per (topic, tone)
@@ -446,12 +529,18 @@ export function mountGrowth(root, { onOpen } = {}) {
         ctx.lineWidth = 1 / k;
         ctx.stroke(p);
       }
-      ctx.beginPath();
-      ctx.moveTo(hover.px, hover.py);
-      ctx.quadraticCurveTo(hover.qx, hover.qy, hover.x, hover.y);
-      ctx.strokeStyle = COLORS.hi;
-      ctx.lineWidth = EDGE_WIDTH[hover.wb] * Math.min(L.scale, 1.2) * 1.5 / k;
-      ctx.stroke();
+      // light the limb from the root out to this problem
+      const t = L.sectors.find(x => x.topic === hover.sec)?.tree;
+      if (t) {
+        ctx.beginPath();
+        ctx.moveTo(hover.x, hover.y);
+        let j = hover.leaf;
+        ctx.lineTo(t.xs[j], t.ys[j]);
+        while (t.par[j] >= 0) { j = t.par[j]; ctx.lineTo(t.xs[j], t.ys[j]); }
+        ctx.strokeStyle = COLORS.hi;
+        ctx.lineWidth = 1.4 / k;
+        ctx.stroke();
+      }
       ctx.beginPath();
       ctx.arc(hover.x, hover.y, hover.dot * 1.8 / k, 0, TAU);
       ctx.fillStyle = COLORS.hi;

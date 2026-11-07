@@ -356,6 +356,8 @@
   // problem; outside a session, it's a plain close.
   function dismissPanel() {
     hidePanel();
+    // closing without rating: don't turn an untracked problem into a card
+    send('dismissRating', { slug: currentSlug() });
     send('skipInSession');
   }
 

@@ -83,21 +83,21 @@ test('a resubmitted verdict id is stored once', async () => {
   await send(msg);
   const r = await send(msg);
   assert.ok(r.duplicate);
-  assert.equal(store.cards['two-sum'].submissions.length, 1);
+  assert.equal(store.pendingProblems['two-sum'].submissions.length, 1);
 });
 
 test('a verdict landing after you navigated away is filed under its own problem', async () => {
   freshStore();
   await send({ kind: 'recordSubmission', slug: 'coin-change', title: 'Coin Change', url: null, status: 'Wrong Answer', submissionId: '10', source: 'network' });
-  assert.equal(store.cards['coin-change'].submissions[0].status, 'Wrong Answer');
-  assert.equal(store.cards['coin-change'].title, 'Coin Change');
+  assert.equal(store.pendingProblems['coin-change'].submissions[0].status, 'Wrong Answer');
+  assert.equal(store.pendingProblems['coin-change'].title, 'Coin Change');
 });
 
 test("the previous problem's title doesn't stick to a new card", async () => {
   freshStore();
   await send({ kind: 'recordSubmission', slug: 'valid-anagram', title: 'Coin Change',
     url: 'https://leetcode.com/problems/valid-anagram/', status: 'Wrong Answer', submissionId: '11', source: 'network' });
-  assert.equal(store.cards['valid-anagram'].title, 'Valid Anagram');
+  assert.equal(store.pendingProblems['valid-anagram'].title, 'Valid Anagram');
 });
 
 test('reviews are bucketed by LOCAL day', async () => {
@@ -113,6 +113,8 @@ test('Drill export: honest p_pred only, prior inputs included, abandoned attempt
   await acThenGrade({ startedAt: Date.now() - 60e3 });
   // a pre-fix (v1) entry whose prediction had seen the outcome
   store.cards['two-sum'].history.unshift({ t: Date.now() - 9 * 86400e3, q: 4, pPred: 0.99 });
+  // coin-change is tracked (rated long ago), so a later WA counts as an attempt
+  store.cards['coin-change'] = { slug: 'coin-change', title: 'Coin Change', reps: 1, due: Date.now(), history: [{ t: Date.now() - 40 * 864e5, q: 4 }], submissions: [] };
   await send({ kind: 'recordSubmission', slug: 'coin-change', title: 'Coin Change', url: null, status: 'Wrong Answer', submissionId: '12', source: 'network' });
   const rows = (await send({ kind: 'exportDrill' })).jsonl.trim().split('\n').map(JSON.parse);
   const ts = rows.filter(r => r.item === 'lc:two-sum');
@@ -253,6 +255,39 @@ test('NeetCode 150 / 250 goal presets', async () => {
   r = await send({ kind: 'saveGoal', goal: { preset: 'nc250', name: 'Summer grind' } });
   assert.equal(r.goal.target, 250);
   assert.equal(r.goal.name, 'Summer grind');
+});
+
+// ---- rating bar: Esc must not create a card ----
+test('an Accepted problem is held until rated; Esc discards it', async () => {
+  freshStore();
+  await send({ kind: 'recordSubmission', slug: 'two-sum', title: 'Two Sum', url: URL_TS, status: 'Accepted', submissionId: '77', source: 'network', code: 'x' });
+  assert.ok(!store.cards?.['two-sum'], 'no card on the verdict alone');
+  assert.ok(store.pendingProblems['two-sum']);
+  const r = await send({ kind: 'dismissRating', slug: 'two-sum' });
+  assert.ok(r.discarded);
+  assert.ok(!store.pendingProblems['two-sum'], 'held submissions are discarded');
+  assert.ok(!store.cards?.['two-sum'], 'still no card');
+  const g = await send({ kind: 'getGoals' });
+  assert.equal(g.totalSolved, 0);
+});
+
+test('rating a held problem turns it into a card with its submissions', async () => {
+  freshStore();
+  await send({ kind: 'recordSubmission', slug: 'two-sum', title: 'Two Sum', url: URL_TS, status: 'Wrong Answer', submissionId: '78', source: 'network' });
+  await acThenGrade({ startedAt: Date.now() - 60e3 });
+  const c = store.cards['two-sum'];
+  assert.equal(c.submissions.length, 2, 'the WA and the AC both carried over');
+  assert.equal(c.history.length, 1);
+  assert.ok(!store.pendingProblems['two-sum']);
+});
+
+test('Esc on a problem you already track keeps its history', async () => {
+  freshStore();
+  await acThenGrade({ startedAt: Date.now() - 60e3 });
+  await send({ kind: 'recordSubmission', slug: 'two-sum', title: 'Two Sum', url: URL_TS, status: 'Accepted', submissionId: '79', source: 'network' });
+  const r = await send({ kind: 'dismissRating', slug: 'two-sum' });
+  assert.ok(r.kept);
+  assert.equal(store.cards['two-sum'].submissions.length, 2);
 });
 
 let failed = 0;
