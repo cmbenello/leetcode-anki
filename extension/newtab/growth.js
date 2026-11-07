@@ -299,7 +299,7 @@ function linkPath(path, L, a, b) {
  * touch them — go into separate faint batches.
  */
 const STAR = '__starred';                       // the ★ filter, alongside the phases
-const inFilter = (nd, f) => !f || (f === STAR ? !!nd.starred : nd.phase === f);
+const inFilter = (nd, f) => !f || (f === STAR ? !!nd.starred : (nd.phases ? nd.phases.includes(f) : nd.phase === f));
 function buildPaint(L, phase = null) {
   for (const nd of L.nodes) nd.inPhase = inFilter(nd, phase);
   const hueOf = {};
@@ -851,7 +851,9 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     const meta = document.createElement('div');
     meta.className = 'tip-meta';
     const due = nd.due != null && nd.due <= Date.now();
-    const ph = view?.phases?.some(p => p.id !== 'unstructured') ? phaseInfo(nd.phase)?.name : null;
+    const ph = view?.phases?.some(p => p.id !== 'unstructured')
+      ? (nd.phases || [nd.phase]).map(id => phaseInfo(id)?.name).filter(Boolean).join(', ') || null
+      : null;
     meta.textContent = [nd.difficulty, topicLabel(nd.sec), when, ph, due ? 'due' : null].filter(Boolean).join(' · ');
     tip.append(head, meta);
     if (nd.parentTitle) {

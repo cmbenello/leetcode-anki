@@ -16,7 +16,7 @@ import { commitWithRetry } from './lib/github.js';
 import { dayKeyMs, todayKey, lastNDayKeys } from './lib/dates.js';
 import { fetchQuestionMeta, fetchCatalog } from './lib/leetcode-api.js';
 import { sanitizeCards } from './lib/cards.js';
-import { validatePhases, normalizePhases, phaseFor, phaseSummary } from './lib/phases.js';
+import { validatePhases, normalizePhases, phasesFor, phaseSummary } from './lib/phases.js';
 import { primaryTopic, topicTags } from './lib/topics.js';
 
 const LANG_EXT = {
@@ -992,6 +992,14 @@ async function learnerState({ keep = null } = {}) {
   return { st: replay(attempts, items), attempts, known, cards, metaAll, cat };
 }
 
+// Every dated solve: Accepted submissions and graded attempts that counted.
+function solveTimes(c) {
+  return [
+    ...(c.history ?? []).filter(h => attemptCorrect(h)).map(h => h.t),
+    ...(c.submissions ?? []).filter(x => !x.undated && /accepted/i.test(x.status)).map(x => x.t),
+  ].filter(Number.isFinite);
+}
+
 function firstSolvedAt(c) {
   const ts = [
     ...(c.history ?? []).filter(h => attemptCorrect(h)).map(h => h.t),
@@ -1027,6 +1035,7 @@ function solvedProblems(cards, metaAll, nc = null) {
       similar: m?.similar ?? [],
       pattern: nc?.bySlug[c.slug]?.p ?? null,
       starred: !!c.starred,                      // ★ come back to this
+      solveTimes: solveTimes(c),                 // for phases; dropped before it leaves the worker
     });
   }
   return out.sort((a, b) => a.t - b.t || (a.slug < b.slug ? -1 : 1));
@@ -1240,7 +1249,11 @@ async function getGoalView(id) {
   const goal = id ? await goalById(id) : null;
   const all = solvedProblems(cards, metaAll, nc);
   const problems = goal ? all.filter(p => goalMatches(goal, p.slug, p.tags)) : all;
-  for (const p of problems) p.phase = phaseFor(phases, p.t, p.undated);
+  for (const p of problems) {
+    p.phases = phasesFor(phases, p.solveTimes, p.undated);   // every prep it was solved in
+    p.phase = p.phases[0];
+    delete p.solveTimes;
+  }
   const progress = goal ? goalProgress(goal, all) : { done: all.length, target: Math.max(all.length, 1), pct: 1 };
   return { ok: true, goal, progress, problems, phases: phaseSummary(phases, problems), now: Date.now() };
 }

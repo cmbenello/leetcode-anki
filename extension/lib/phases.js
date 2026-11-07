@@ -64,12 +64,23 @@ export function phaseFor(phases, t, undated = false) {
 }
 
 /**
- * Phases with how many of `problems` (each with a `phase` id) fall in each,
+ * Every phase a problem belongs to: each one containing at least one of its
+ * solves (a problem done for two different preps counts in both, and phases
+ * may overlap). None at all — or no dates — is Unstructured.
+ */
+export function phasesFor(phases, times = [], undated = false) {
+  const days = [...new Set((times || []).filter(t => Number.isFinite(t) && t > 0).map(dayKeyMs))];
+  const ids = phases.filter(p => days.some(d => d >= p.from && (!p.to || d <= p.to))).map(p => p.id);
+  return ids.length ? ids : [UNSTRUCTURED.id];
+}
+
+/**
+ * Phases with how many of `problems` fall in each (by `phases`, else `phase`),
  * in date order. Unstructured comes last, and only when something is in it.
  */
 export function phaseSummary(phases, problems) {
   const counts = {};
-  for (const p of problems) counts[p.phase] = (counts[p.phase] || 0) + 1;
+  for (const p of problems) for (const id of (p.phases || [p.phase])) counts[id] = (counts[id] || 0) + 1;
   const out = phases.map(p => ({ ...p, count: counts[p.id] || 0 }));
   if (counts[UNSTRUCTURED.id]) out.push({ ...UNSTRUCTURED, count: counts[UNSTRUCTURED.id] });
   return out;

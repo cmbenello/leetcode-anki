@@ -1,7 +1,7 @@
 // Run with:  node tests/phases.test.js
 // Prep phases (lib/phases.js): which window a solve falls in, by LOCAL day.
 import assert from 'node:assert/strict';
-import { validatePhases, normalizePhases, phaseFor, phaseSummary, UNSTRUCTURED } from '../extension/lib/phases.js';
+import { validatePhases, normalizePhases, phaseFor, phasesFor, phaseSummary, UNSTRUCTURED } from '../extension/lib/phases.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -29,6 +29,16 @@ test('overlapping windows: the one that started later wins', () => {
   const ov = validatePhases([{ name: 'Long', from: '2026-01-01', to: '2026-12-31' }, { name: 'Sprint', from: '2026-06-01', to: '2026-06-14' }]).phases;
   assert.equal(phaseFor(ov, at(2026, 6, 5)), 'sprint');
   assert.equal(phaseFor(ov, at(2026, 6, 20)), 'long');
+});
+
+test('phasesFor: a problem solved in two preps belongs to both; overlaps count twice', () => {
+  assert.deepEqual(phasesFor(P, [at(2026, 3, 10), at(2026, 9, 1)]), ['spring-push', 'fall-push']);
+  assert.deepEqual(phasesFor(P, [at(2026, 6, 1)]), [UNSTRUCTURED.id], 'between phases');
+  assert.deepEqual(phasesFor(P, [], true), [UNSTRUCTURED.id], 'undated');
+  const ov = validatePhases([{ name: 'Long', from: '2026-01-01', to: '2026-12-31' }, { name: 'Sprint', from: '2026-06-01', to: '2026-06-14' }]).phases;
+  assert.deepEqual(phasesFor(ov, [at(2026, 6, 5)]), ['long', 'sprint'], 'overlapping windows both hold it');
+  const sum = phaseSummary(ov, [{ phases: ['long', 'sprint'] }, { phases: ['long'] }]);
+  assert.deepEqual(sum.map(p => [p.id, p.count]), [['long', 2], ['sprint', 1]]);
 });
 
 test('validation: names, dates and order are checked; blank rows ignored; ids unique', () => {

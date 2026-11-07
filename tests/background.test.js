@@ -348,6 +348,22 @@ test('prep phases: grouped by LOCAL first-solve day; outside a phase or undated 
   assert.deepEqual(v.phases.map(p => [p.name, p.count]), [['Company A', 1], ['Company B', 1], ['Unstructured', 3]]);
 });
 
+test('prep phases: a problem re-solved in a later prep counts in both', async () => {
+  freshStore();
+  await send({ kind: 'savePhases', phases: [
+    { name: 'Company A', from: '2026-03-02', to: '2026-04-17' },
+    { name: 'Company B', from: '2026-08-24' },
+  ] });
+  const a = new Date(2026, 2, 20, 12).getTime(), b = new Date(2026, 9, 5, 12).getTime();
+  store.cards = { 'two-sum': { slug: 'two-sum', title: 'Two Sum', site: 'leetcode', reps: 1, lapses: 0, due: Date.now() + 864e5,
+    history: [{ t: a, q: 4 }], submissions: [{ t: a, status: 'Accepted', id: '1' }, { t: b, status: 'Accepted', id: '2' }] } };
+  const v = await send({ kind: 'getGoalView', id: null });
+  const p = v.problems.find(x => x.slug === 'two-sum');
+  assert.deepEqual(p.phases, ['company-a', 'company-b']);
+  assert.ok(!('solveTimes' in p), 'raw solve times stay in the worker');
+  assert.deepEqual(v.phases.map(x => [x.name, x.count]), [['Company A', 1], ['Company B', 1]]);
+});
+
 test('prep phases: seeded from data/phases.local.json; a newer seed replaces unedited phases, never edited ones', async () => {
   freshStore();
   localSeed = { version: 1, phases: [{ name: 'Seeded', from: '2026-01-01', to: '2026-02-01' }] };
