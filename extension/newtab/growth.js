@@ -51,6 +51,7 @@ const hsla = (h, l, a) => `hsla(${h}, 42%, ${l}%, ${a.toFixed(3)})`;
 const TOKENS = {
   edge: ['--stem', 'rgba(206,210,217,0.4)'], hi: ['--stem-hi', 'rgba(206,210,217,0.95)'],
   ring: ['--ring', 'rgba(206,210,217,0.16)'], label: ['--label', 'rgba(206,210,217,0.5)'],
+  bg: ['--bg', '#17181b'],
 };
 const TONES = ['old', 'mid', 'recent', 'today'];
 let COLORS = {};
@@ -298,6 +299,7 @@ function linkPath(path, L, a, b) {
  * touch them — go into separate faint batches.
  */
 const STAR = '__starred';                       // the ★ filter, alongside the phases
+const PICKED = 2.1;                             // dot size under a filter: findable at a glance
 const inFilter = (nd, f) => !f || (f === STAR ? !!nd.starred : nd.phase === f);
 function buildPaint(L, phase = null) {
   for (const nd of L.nodes) nd.inPhase = inFilter(nd, phase);
@@ -428,14 +430,15 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     ctx.strokeStyle = phase ? 'rgba(206,210,217,0.34)' : 'rgba(206,210,217,0.2)';
     ctx.stroke(paint.links);
 
-    // dots: one fill per (topic, tone)
+    // dots: one fill per (topic, tone); under a filter the picked ones are
+    // drawn last, on top (below)
     for (const sec of L.sectors) {
       for (const tone of TONES) {
         let any = false;
         ctx.beginPath();
         for (const nd of sec.nodes) {
-          if (nd.tone !== tone || !nd.inPhase) continue;
-          const r = (phase ? nd.dot * 1.55 : nd.dot) / k;   // picked out: bigger, so a filter reads at a glance
+          if (nd.tone !== tone || !nd.inPhase || phase) continue;
+          const r = nd.dot / k;
           ctx.moveTo(nd.x + r, nd.y);
           ctx.arc(nd.x, nd.y, r, 0, TAU);
           any = true;
@@ -457,6 +460,20 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       }
       ctx.fillStyle = 'rgba(206,210,217,0.09)';
       ctx.fill();
+      // the picked ones: about twice the size, in their topic's bright tone,
+      // each with a thin background-coloured edge so touching dots stay apart
+      for (const nd of L.nodes) {
+        if (!nd.inPhase) continue;
+        const r = nd.dot * PICKED / k;
+        ctx.beginPath();
+        ctx.arc(nd.x, nd.y, r + 1.1 / k, 0, TAU);
+        ctx.fillStyle = COLORS.bg;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(nd.x, nd.y, r, 0, TAU);
+        ctx.fillStyle = paint.tone[nd.sec].recent;
+        ctx.fill();
+      }
     }
 
     if (hover) {
@@ -470,7 +487,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       ctx.lineWidth = 1.3 / k;
       ctx.stroke(p);
       ctx.beginPath();
-      ctx.arc(hover.x, hover.y, hover.dot * 1.8 / k, 0, TAU);
+      ctx.arc(hover.x, hover.y, hover.dot * (phase ? PICKED * 1.25 : 1.8) / k, 0, TAU);
       ctx.fillStyle = COLORS.hi;
       ctx.fill();
     }
@@ -636,7 +653,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     for (const nd of L.nodes) {
       if (!nd.inPhase) continue;                 // faded problems don't pop up
       const d = Math.hypot(nd.x - x, nd.y - y);
-      if (d <= nd.dot / k + 4 / s && d < bd) { bd = d; best = nd; }
+      if (d <= nd.dot * (phase ? PICKED : 1) / k + 4 / s && d < bd) { bd = d; best = nd; }
     }
     return best;
   }
