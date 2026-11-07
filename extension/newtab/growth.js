@@ -57,7 +57,7 @@ const TOPIC_HUE = {
   'graph': 200, 'heap': 352, 'backtracking': 284, 'dynamic-programming': 158,
   'greedy': 28, 'bit-manipulation': 228, 'math': 185, 'other': 220,
 };
-const hsla = (h, l, a) => `hsla(${h}, 34%, ${l}%, ${a.toFixed(3)})`;   // soft, low saturation
+const hsla = (h, l, a) => `hsla(${h}, 42%, ${l}%, ${a.toFixed(3)})`;   // soft, but enough to read
 
 export function primaryTopic(tags = []) {
   const norm = new Set(tags.map(t => ALIAS[t] || t));
@@ -71,6 +71,7 @@ const TOKENS = {
   old: ['--leaf-old', 'rgba(206,210,217,0.4)'], mid: ['--leaf-mid', 'rgba(206,210,217,0.55)'],
   recent: ['--leaf-recent', 'rgba(206,210,217,0.72)'], today: ['--leaf-today', 'rgba(206,210,217,0.92)'],
   ring: ['--ring', 'rgba(206,210,217,0.16)'], label: ['--label', 'rgba(206,210,217,0.5)'],
+  cross: ['--cross', 'rgba(206,210,217,0.085)'], crossHi: ['--cross-hi', 'rgba(206,210,217,0.5)'],
 };
 const TONES = ['old', 'mid', 'recent', 'today'];
 let COLORS = {};
@@ -164,7 +165,8 @@ export function layout(problems, { size, width = size, height = size, target, no
   // wedge. Different subtrees never overlap, so edges never cross.
   const weight = (it) => Math.pow(sizeOf(it), 0.85);
   function assign(it, lo, hi) {
-    it.ang = (lo + hi) / 2;
+    // not dead centre: a little play inside the wedge keeps it from looking machined
+    it.ang = lo + (hi - lo) * (0.32 + 0.36 * hash01(it.p.slug));
     if (!it.kids.length) return;
     const total = it.kids.reduce((s, c) => s + weight(c), 0);
     let a = lo;
@@ -195,15 +197,19 @@ export function layout(problems, { size, width = size, height = size, target, no
   for (const it of items) {
     const { p, k } = it;
     const sec = sectors[p._topic];
-    const r = r0 + (R - r0) * Math.sqrt((k + 1) / T);
+    const r0k = r0 + (R - r0) * Math.sqrt((k + 1) / T);
     const ang = it.ang;
-    const x = cx + Math.cos(ang) * r, y = cy + Math.sin(ang) * r;
     const par = it.parent?.node || null;
     const pr = par ? par.r : r0 - 8;
+    // ±3% radial jitter for variety, never inward of the parent
+    const r = Math.max(pr + 3, r0k * (1 + (hash01(p.slug + 'r') - 0.5) * 0.06));
+    const x = cx + Math.cos(ang) * r, y = cy + Math.sin(ang) * r;
     const pa = par ? par.ang : ang;
     const px = cx + Math.cos(pa) * pr, py = cy + Math.sin(pa) * pr;
-    const er = pr + (r - pr) * 0.18;
-    const qx = cx + Math.cos(ang) * er, qy = cy + Math.sin(ang) * er;
+    // elbow height and a slight sideways bend vary per edge
+    const er = pr + (r - pr) * (0.08 + 0.3 * hash01(p.slug + 'e'));
+    const qa = ang + (hash01(p.slug + 'b') - 0.5) * 0.14;
+    const qx = cx + Math.cos(qa) * er, qy = cy + Math.sin(qa) * er;
     const age = now - p.t;
     const sameDay = new Date(p.t).toDateString() === new Date(now).toDateString();
     const node = {
@@ -211,7 +217,8 @@ export function layout(problems, { size, width = size, height = size, target, no
       via: it.via, parentTitle: par ? par.title : null,
       // edge width bucket: thick near the centre, thinner toward the edge
       wb: Math.min(3, Math.floor(Math.max(0, (pr - r0) / (R - r0 || 1)) * 4)),
-      dot: (p.difficulty === 'Hard' ? 2.8 : p.difficulty === 'Easy' ? 1.9 : 2.35) * Math.sqrt(scale),
+      vb: Math.min(2, Math.floor(hash01(p.slug + 'w') * 3)),      // width variance bucket
+      dot: (p.difficulty === 'Hard' ? 3.7 : p.difficulty === 'Easy' ? 2.6 : 3.1) * Math.sqrt(scale),
       sec: p._topic,
       tone: p.undated ? 'old' : sameDay ? 'today' : age < 7 * DAY ? 'recent' : age < 60 * DAY ? 'mid' : 'old',
     };
@@ -219,10 +226,63 @@ export function layout(problems, { size, width = size, height = size, target, no
     sec.nodes.push(node);
     nodes.push(node);
   }
-  return { cx, cy, R, r0, T, n, nodes, scale, sectors: Object.values(sectors) };
+  // Pass 4 — cross-topic links. A problem that also belongs to other topics
+  // (by its tags, or a LeetCode similar question placed in another topic)
+  // gets a super-faint link to the most related problem over there.
+  const bySlug = Object.fromEntries(nodes.map(nd => [nd.slug, nd]));
+  const cross = new Map();
+  const addCross = (a, b, score) => {
+    const key = a.slug < b.slug ? `${a.slug}|${b.slug}` : `${b.slug}|${a.slug}`;
+    if (!cross.has(key) || cross.get(key).score < score) cross.set(key, { a, b, score });
+  };
+  for (const nd of nodes) {
+    const picks = [];
+    for (const sl of nd.similar || []) {
+      const q = bySlug[sl];
+      if (q && q.sec !== nd.sec) picks.push({ q, score: 2 });
+    }
+    const others = new Set();
+    for (const t of nd.tags || []) {
+      const topic = ALIAS[t] || t;
+      if (topic !== nd.sec && sectors[topic]) others.add(topic);
+    }
+    for (const topic of others) {
+      let best = null, bs = 0.34;
+      for (const q of sectors[topic].nodes) {
+        const rel = relate(nd, q);
+        if (rel.score > bs) { bs = rel.score; best = q; }
+      }
+      if (best) picks.push({ q: best, score: bs });
+    }
+    picks.sort((x, y) => y.score - x.score).slice(0, 2).forEach(({ q, score }) => addCross(nd, q, score));
+  }
+  const crossLinks = [...cross.values()];
+  for (const c of crossLinks) {
+    (c.a.cross ||= []).push(c.b);
+    (c.b.cross ||= []).push(c.a);
+  }
+  // "also" = the problem's OWN other topics (from its tags), not the topics
+  // of whatever happens to link to it
+  for (const nd of nodes) {
+    const own = new Set();
+    for (const t of nd.tags || []) {
+      const topic = ALIAS[t] || t;
+      if (topic !== nd.sec && sectors[topic]) own.add(topic);
+    }
+    if (own.size) nd.alsoIn = [...own];
+  }
+
+  return { cx, cy, R, r0, T, n, nodes, scale, crossLinks, sectors: Object.values(sectors) };
 }
 
-const EDGE_WIDTH = [2.6, 2.1, 1.7, 1.35];   // per width bucket, before scale
+const EDGE_WIDTH = [1.6, 1.3, 1.05, 0.85];  // by depth bucket, before scale
+const WIDTH_VARIANCE = [0.75, 1, 1.25];       // per-edge variety
+
+function crossPath(path, L, a, b) {
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  path.moveTo(a.x, a.y);
+  path.quadraticCurveTo(L.cx + (mx - L.cx) * 0.3, L.cy + (my - L.cy) * 0.3, b.x, b.y);
+}
 
 /**
  * Everything static, batched once per data change (content coordinates):
@@ -235,7 +295,7 @@ function buildPaint(L) {
     // Lines stay neutral silver; only the dots carry the topic's colour,
     // brighter the more you've solved in that topic (recent ones a touch more).
     bySec[sec.topic] = {
-      edges: EDGE_WIDTH.map(() => new Path2D()),
+      edges: EDGE_WIDTH.map(() => WIDTH_VARIANCE.map(() => new Path2D())),
       tone: {
         old: hsla(sec.hue, 58 + 10 * I, 0.38 + 0.5 * I),
         mid: hsla(sec.hue, 61 + 10 * I, 0.44 + 0.5 * I),
@@ -245,10 +305,14 @@ function buildPaint(L) {
     };
   }
   for (const nd of L.nodes) {
-    const p = bySec[nd.sec].edges[nd.wb];
+    const p = bySec[nd.sec].edges[nd.wb][nd.vb];
     p.moveTo(nd.px, nd.py);
     p.quadraticCurveTo(nd.qx, nd.qy, nd.x, nd.y);
   }
+  // cross-topic links bow toward the centre, like a chord diagram
+  const cross = new Path2D();
+  for (const { a, b } of L.crossLinks) crossPath(cross, L, a, b);
+  bySec.__cross = cross;
   return bySec;
 }
 
@@ -339,13 +403,19 @@ export function mountGrowth(root, { onOpen } = {}) {
     }
 
     ctx.lineCap = 'round';
+    // cross-topic links first, barely there, underneath everything
+    ctx.strokeStyle = COLORS.cross;
+    ctx.lineWidth = 0.7 / k;
+    ctx.stroke(edges.__cross);
+
     ctx.strokeStyle = COLORS.edge;
     for (const sec of L.sectors) {
       const paint = edges[sec.topic];
-      paint.edges.forEach((path, i) => {
-        ctx.lineWidth = EDGE_WIDTH[i] * L.scale / k;
+      paint.edges.forEach((byVar, i) => byVar.forEach((path, v) => {
+        // line weight barely grows with canvas size (dots and spacing do)
+        ctx.lineWidth = EDGE_WIDTH[i] * WIDTH_VARIANCE[v] * Math.min(L.scale, 1.2) / k;
         ctx.stroke(path);
-      });
+      }));
     }
 
     // nodes: one fill per (topic, tone)
@@ -368,11 +438,19 @@ export function mountGrowth(root, { onOpen } = {}) {
     }
 
     if (hover) {
+      // light up this problem's cross-topic links
+      if (hover.cross?.length) {
+        const p = new Path2D();
+        for (const q of hover.cross) crossPath(p, L, hover, q);
+        ctx.strokeStyle = COLORS.crossHi;
+        ctx.lineWidth = 1 / k;
+        ctx.stroke(p);
+      }
       ctx.beginPath();
       ctx.moveTo(hover.px, hover.py);
       ctx.quadraticCurveTo(hover.qx, hover.qy, hover.x, hover.y);
       ctx.strokeStyle = COLORS.hi;
-      ctx.lineWidth = EDGE_WIDTH[hover.wb] * L.scale * 1.3 / k;
+      ctx.lineWidth = EDGE_WIDTH[hover.wb] * Math.min(L.scale, 1.2) * 1.5 / k;
       ctx.stroke();
       ctx.beginPath();
       ctx.arc(hover.x, hover.y, hover.dot * 1.8 / k, 0, TAU);
@@ -487,26 +565,45 @@ export function mountGrowth(root, { onOpen } = {}) {
     if (nd !== hover) { hover = nd; requestDraw(); }
     canvas.style.cursor = nd ? 'pointer' : s > 1 ? 'grab' : 'default';
     if (!nd) { tip.hidden = true; return; }
-    const when = nd.undated ? 'solved on NeetCode'
-      : `solved ${new Date(nd.t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    const when = nd.undated ? 'on NeetCode'
+      : new Date(nd.t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     tip.textContent = '';
-    const b = document.createElement('b'); b.textContent = nd.title;
-    const meta = document.createElement('span');
-    meta.textContent = [topicLabel(nd._topic), nd.difficulty].filter(Boolean).join(' · ');
-    const line = document.createElement('span');
+    const head = document.createElement('div');
+    head.className = 'tip-head';
+    const sw = document.createElement('i');
+    sw.className = 'tip-dot';
+    sw.style.background = edges[nd._topic]?.tone.recent || COLORS.hi;
+    const b = document.createElement('b');
+    b.textContent = nd.title;
+    head.append(sw, b);
+    const meta = document.createElement('div');
+    meta.className = 'tip-meta';
     const due = nd.due != null && nd.due <= Date.now();
-    line.textContent = `${when}${nd.reviews ? ` · ${nd.reviews} review${nd.reviews === 1 ? '' : 's'}` : ''}${due ? ' · due for review' : ''}`;
-    const from = document.createElement('span');
-    from.className = 'growth-tip-from';
-    from.textContent = nd.parentTitle
-      ? `grew from ${nd.parentTitle} · ${{ similar: 'similar problem', pattern: 'same pattern', topics: 'shared topics', topic: 'same topic' }[nd.via]}`
-      : `first ${topicLabel(nd._topic)} problem`;
-    tip.append(b, meta, line, from);
+    meta.textContent = [nd.difficulty, topicLabel(nd._topic), when, due ? 'due' : null].filter(Boolean).join(' · ');
+    tip.append(head, meta);
+    if (nd.parentTitle) {
+      const from = document.createElement('div');
+      from.className = 'tip-from';
+      from.textContent = `↳ ${nd.parentTitle}`;
+      const why = document.createElement('span');
+      why.textContent = ` · ${{ similar: 'similar', pattern: 'same pattern', topics: 'shared topics', topic: 'same topic' }[nd.via]}`;
+      from.appendChild(why);
+      tip.appendChild(from);
+    }
+    if (nd.alsoIn?.length) {
+      const also = document.createElement('div');
+      also.className = 'tip-also';
+      also.textContent = `also ${nd.alsoIn.map(topicLabel).join(', ')}`;
+      tip.appendChild(also);
+    }
     tip.hidden = false;
     const off = (stage.clientWidth - W) / 2;
-    const sx = off + nd.x * s + tx + 16, sy = nd.y * s + ty - 10;
-    tip.style.left = `${Math.min(sx, off + W - 230)}px`;
-    tip.style.top = `${Math.max(0, sy)}px`;
+    const ax = off + nd.x * s + tx, ay = nd.y * s + ty;
+    const tw = tip.offsetWidth || 220, th = tip.offsetHeight || 70;
+    const left = ax + 14 + tw > off + W ? ax - 14 - tw : ax + 14;
+    const top = ay - th - 12 < 0 ? ay + 14 : ay - th - 12;
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
   });
   canvas.addEventListener('pointerleave', () => {
     if (drag) return;

@@ -719,4 +719,30 @@ main { padding-top: 34px; }
 
 body { overflow-x: hidden; }   /* the full-bleed graph must not add a sideways scrollbar */
 
-.growth-tip-from { color: var(--ink-faint); font-style: italic; }
+
+/* ---- hover card ---- */
+:root[data-theme="glass"] .growth-tip,
+.growth-tip {
+  display: grid;
+  gap: 3px;
+  min-width: 170px;
+  max-width: 280px;
+  padding: 10px 12px 10px;
+  background: rgba(30, 31, 35, 0.97);
+  border: 1px solid rgba(var(--mono, 206, 210, 217), 0.12);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+  color: rgba(var(--mono, 206, 210, 217), 0.62);
+  font-size: 11.5px;
+  line-height: 1.35;
+  pointer-events: none;
+  animation: tip-in 0.12s ease-out;
+}
+@keyframes tip-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+.growth-tip .tip-head { display: flex; align-items: center; gap: 7px; }
+.growth-tip .tip-head b { color: rgba(var(--mono, 206, 210, 217), 0.95); font-weight: 600; font-size: 12.5px; }
+.growth-tip .tip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.growth-tip .tip-meta { padding-left: 14px; }
+.growth-tip .tip-from { padding-left: 14px; color: rgba(var(--mono, 206, 210, 217), 0.78); }
+.growth-tip .tip-from span { color: rgba(var(--mono, 206, 210, 217), 0.48); }
+.growth-tip .tip-also { padding-left: 14px; color: rgba(var(--mono, 206, 210, 217), 0.48); }

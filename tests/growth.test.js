@@ -59,6 +59,25 @@ test('layout: links stay inside a topic and always point outward', () => {
   assert.equal(primaryTopic(['array', 'dynamic-programming']), 'dynamic-programming');
 });
 
+test('cross-topic links: shared second topic, and similar questions across topics', () => {
+  const probs = [
+    P('binary-search', ['binary-search', 'array'], {}, 0),
+    P('koko-eating-bananas', ['binary-search', 'array'], {}, 1),
+    P('house-robber', ['dynamic-programming', 'array'], {}, 2),
+    // a DP problem that is also a binary-search problem
+    P('russian-doll-envelopes', ['dynamic-programming', 'binary-search', 'array'], {}, 3),
+    P('two-sum', ['array', 'hash-table'], { similar: ['house-robber'] }, 4),   // contrived cross-topic similar
+  ];
+  const L = layout(probs, { width: 1000, height: 800, target: 10, now: NOW });
+  const pairs = L.crossLinks.map(c => [c.a.slug, c.b.slug].sort().join('|'));
+  assert.ok(pairs.some(p => p.includes('russian-doll-envelopes') && (p.includes('koko') || p.includes('binary-search|'))),
+    `expected a DP<->binary-search link, got ${JSON.stringify(pairs)}`);
+  assert.ok(pairs.includes('house-robber|two-sum'), 'similar question across topics links too');
+  const rde = L.nodes.find(x => x.slug === 'russian-doll-envelopes');
+  assert.ok(rde.alsoIn.includes('binary-search'));
+  for (const c of L.crossLinks) assert.notEqual(c.a.sec, c.b.sec, 'cross links only join different topics');
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try { fn(); console.log(`  ok   ${name}`); }
