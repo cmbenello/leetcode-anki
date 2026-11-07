@@ -16,7 +16,12 @@ const $ = (s) => document.querySelector(s);
 function send(kind, payload = {}, timeoutMs = 20000) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve({ ok: false, error: `no answer to "${kind}" after ${timeoutMs / 1000}s` }), timeoutMs);
-    const done = (v) => { clearTimeout(timer); resolve(v ?? { ok: false, error: `empty answer to "${kind}"` }); };
+    const done = (v) => {
+      clearTimeout(timer);
+      const out = v ?? { ok: false, error: `empty answer to "${kind}"` };
+      if (!out.ok && /unknown kind/i.test(out.error || '')) showStaleBackground();
+      resolve(out);
+    };
     try {
       chrome.runtime.sendMessage({ kind, ...payload }, (resp) => {
         if (chrome.runtime.lastError) done({ ok: false, error: chrome.runtime.lastError.message });
@@ -32,6 +37,7 @@ function send(kind, payload = {}, timeoutMs = 20000) {
 
 // Anything unexpected shows up on the page instead of failing silently.
 function showBanner(text) {
+  if (staleShown) return;                 // the stale-worker banner explains it already
   let el = document.getElementById('page-error');
   if (!el) {
     el = document.createElement('div');
@@ -41,6 +47,33 @@ function showBanner(text) {
     document.body.prepend(el);
   }
   el.textContent = `${text}  (click to dismiss)`;
+}
+// Chrome reads extension PAGES fresh from disk on every new tab, but keeps
+// running the background worker it loaded at the last extension reload. After
+// the files change, the new page asks the old worker for things it has never
+// heard of ("unknown kind: getGoals"). That's proof of a stale worker, and the
+// fix is a reload — so offer it right there.
+let staleShown = false;
+function showStaleBackground() {
+  if (staleShown) return;
+  staleShown = true;
+  document.getElementById('page-error')?.remove();
+  const el = document.createElement('div');
+  el.id = 'stale-banner';
+  el.className = 'page-error stale-banner';
+  const text = document.createElement('span');
+  text.textContent = 'The extension was updated, but Chrome is still running the old version in the background. Reload it here, or with ↻ on chrome://extensions.';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'primary';
+  btn.textContent = 'Reload extension';
+  btn.addEventListener('click', () => {
+    text.textContent = 'Reloading… open a new tab in a moment.';
+    btn.remove();
+    setTimeout(() => chrome.runtime.reload(), 150);
+  });
+  el.append(text, btn);
+  document.body.prepend(el);
 }
 window.addEventListener('error', (e) => showBanner(`Something broke: ${e.message}`));
 window.addEventListener('unhandledrejection', (e) => showBanner(`Something broke: ${e.reason?.message || e.reason}`));
