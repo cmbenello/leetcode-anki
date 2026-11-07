@@ -960,6 +960,7 @@ function solvedProblems(cards, metaAll, nc = null) {
       slug: c.slug, title: c.title || c.slug, site: c.site || 'leetcode',
       tags: tagSlugs(m), tagNames: (m?.tags || []).map(t => t.name),
       difficulty: m?.difficulty ?? null,
+      acRate: m?.acRate ?? null,                 // with the label, places it by difficulty
       t: undated ? 0 : (first ?? c.history?.[0]?.t ?? Date.now()),
       undated,
       due: c.due ?? null, reviews: (c.history ?? []).length, lapses: c.lapses ?? 0,
