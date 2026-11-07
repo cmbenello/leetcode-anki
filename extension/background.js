@@ -342,6 +342,7 @@ async function handleGrade({ slug, title, quality, durationMs, readingMs, coding
   existing.title = bestTitle(slug, existing.title, title, await getMeta(slug), site);
   existing.site = site;
   if (url) existing.lastUrl = normalizeProblemUrl(url);
+  if (existing.noReview) { delete existing.noReview; existing.due = Date.now(); }   // rated now: it joins reviews
 
   const { card, prevIntervalMin, nextIntervalMin } = applyGrade(existing, quality, settings);
   card.history.push({
@@ -396,9 +397,10 @@ async function handleGrade({ slug, title, quality, durationMs, readingMs, coding
 }
 
 // Submissions for a problem you don't track yet wait here until you rate it.
-// Rating turns them into a card; dismissing the rating (Esc / ×) throws them
-// away — before, the card was created on the Accepted verdict, so closing
-// the rating bar still left a card behind.
+// Rating turns them into a review card. Closing the bar (Esc / ×) stores the
+// solve WITHOUT a review: a record with noReview set, never due, that still
+// counts as solved (growth view, daily tracker, goals, the learner model).
+// Rate it on a later attempt and it joins reviews like any other card.
 const PENDING_KEY = 'pendingProblems';
 async function getPending() { return (await chrome.storage.local.get(PENDING_KEY))[PENDING_KEY] || {}; }
 async function setPending(p) {
@@ -406,13 +408,27 @@ async function setPending(p) {
   for (const [k, v] of Object.entries(p)) if ((v.at || 0) < cutoff) delete p[k];
   await chrome.storage.local.set({ [PENDING_KEY]: p });
 }
+const NEVER = Number.MAX_SAFE_INTEGER;
+const inReview = (c) => !c.noReview;
 async function dismissRating(slug) {
   if (!slug || (await getCard(slug))) return { ok: true, kept: true };   // tracked problems keep their history
   const pend = await getPending();
-  const had = !!pend[slug];
+  const held = pend[slug];
+  if (!held) return { ok: true, stored: false };
+  const c = newCard(slug, held.title || slugTitle(slug), held.site || 'leetcode');
+  c.submissions = held.submissions;
+  if (held.url) c.lastUrl = held.url;
+  if (held.code != null) {
+    // the hourly sweep still commits an Accepted solution if sync is on
+    c.pendingCode = held.code; c.pendingLang = held.lang ?? null;
+    c.pendingAt = Date.now(); c.pendingStatus = 'Accepted';
+  }
+  c.noReview = true;
+  c.due = NEVER;
+  await upsertCard(c);
   delete pend[slug];
   await setPending(pend);
-  return { ok: true, discarded: had };
+  return { ok: true, stored: true };
 }
 
 async function recordSubmissionEvent({ slug, title, url, status, submissionId, source, detail, code, language }) {
@@ -1769,7 +1785,7 @@ async function renderSiteReadme(site) {
     lines.push('| --- | --- | --- | --- | --- |');
     for (const c of sorted) {
       const d = meta[c.slug]?.difficulty ?? '—';
-      const due = c.due ? dayKeyMs(c.due) : '—';
+      const due = c.due && inReview(c) ? dayKeyMs(c.due) : '—';
       lines.push(`| [${c.title}](./${c.slug}/) | ${d} | ${c.reps} | ${c.lapses} | ${due} |`);
     }
   }
@@ -1866,7 +1882,7 @@ async function getDueList() {
   const now = Date.now();
   const due = [], upcoming = [];
   for (const c of Object.values(cards)) {
-    if (passed.has(c.slug)) continue;
+    if (passed.has(c.slug) || !inReview(c)) continue;
     const enriched = { ...c, meta: meta[c.slug] ?? null };
     if ((c.due ?? 0) <= now) due.push(enriched); else upcoming.push(enriched);
   }

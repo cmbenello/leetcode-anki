@@ -252,11 +252,10 @@
   max-width: none;
   display: grid;
   grid-template-columns: auto auto auto;
-  grid-template-areas: "q buttons close" ". hint .";
+  grid-template-areas: "title buttons close";
   align-items: center;
   column-gap: 14px;
-  row-gap: 4px;
-  padding: 12px 12px 10px 18px;
+  padding: 10px 8px 10px 18px;
   background: #1c1d20;
   border: 1px solid rgba(206, 210, 217, 0.14);
   border-radius: 14px;
@@ -265,7 +264,12 @@
 }
 #lcanki-root:not(.lcanki-hidden) .lcanki-panel.lcanki-bar { animation: lcanki-bar-in 0.18s ease-out; }
 @keyframes lcanki-bar-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-#lcanki-root .lcanki-q { grid-area: q; font-size: 13px; color: rgba(206, 210, 217, 0.72); white-space: nowrap; }
+#lcanki-root .lcanki-bar .lcanki-title {
+  grid-area: title; margin: 0; max-width: 260px;
+  font: 500 13.5px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: rgba(206, 210, 217, 0.9);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 #lcanki-root .lcanki-bar .lcanki-buttons { grid-area: buttons; display: flex; gap: 6px; }
 #lcanki-root .lcanki-bar .lcanki-btn {
   width: 38px; height: 34px; padding: 0;
@@ -283,10 +287,9 @@
   grid-area: close; position: static; width: 26px; height: 26px; margin: 0;
   background: none; border: 0; cursor: pointer; font-size: 18px; line-height: 1;
   color: rgba(206, 210, 217, 0.45);
+  opacity: 0; transition: opacity 0.12s;          /* only there when you reach for it */
 }
+#lcanki-root .lcanki-bar:hover .lcanki-close,
+#lcanki-root .lcanki-bar .lcanki-close:focus-visible { opacity: 1; }
 #lcanki-root .lcanki-bar .lcanki-close:hover { color: rgba(206, 210, 217, 0.9); }
-#lcanki-root .lcanki-scale-hint {
-  grid-area: hint; display: flex; justify-content: space-between;
-  font-size: 10.5px; color: rgba(206, 210, 217, 0.42); padding: 0 2px;
-}
 #lcanki-root .lcanki-bar .lcanki-toast { grid-column: 1 / -1; }

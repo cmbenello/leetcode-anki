@@ -318,18 +318,45 @@ test('NeetCode 150 / 250 goal presets', async () => {
   assert.equal(r.goal.name, 'Summer grind');
 });
 
-// ---- rating bar: Esc must not create a card ----
-test('an Accepted problem is held until rated; Esc discards it', async () => {
+// ---- rating bar: Esc keeps the solve but schedules no review ----
+test('an Accepted problem is held until rated; Esc stores it with no review', async () => {
   freshStore();
   await send({ kind: 'recordSubmission', slug: 'two-sum', title: 'Two Sum', url: URL_TS, status: 'Accepted', submissionId: '77', source: 'network', code: 'x' });
   assert.ok(!store.cards?.['two-sum'], 'no card on the verdict alone');
   assert.ok(store.pendingProblems['two-sum']);
   const r = await send({ kind: 'dismissRating', slug: 'two-sum' });
-  assert.ok(r.discarded);
-  assert.ok(!store.pendingProblems['two-sum'], 'held submissions are discarded');
-  assert.ok(!store.cards?.['two-sum'], 'still no card');
+  assert.ok(r.stored);
+  assert.ok(!store.pendingProblems['two-sum']);
+  const c = store.cards['two-sum'];
+  assert.ok(c.noReview, 'stored without a review');
+  assert.equal(c.submissions.length, 1);
+  assert.equal(c.history.length, 0, 'no grade was given');
   const g = await send({ kind: 'getGoals' });
-  assert.equal(g.totalSolved, 0);
+  assert.equal(g.totalSolved, 1, 'it still counts as solved');
+  const d = await send({ kind: 'getDueList' });
+  assert.ok(!d.due.some(x => x.slug === 'two-sum') && !d.upcoming.some(x => x.slug === 'two-sum'), 'never in the review lists');
+  const v = await send({ kind: 'getGoalView', id: null });
+  assert.ok(v.problems.some(p => p.slug === 'two-sum'), 'and it grows on the graph');
+});
+
+test('a problem stored with no review joins reviews when you rate it later', async () => {
+  freshStore();
+  await send({ kind: 'recordSubmission', slug: 'two-sum', title: 'Two Sum', url: URL_TS, status: 'Accepted', submissionId: '80', source: 'network' });
+  await send({ kind: 'dismissRating', slug: 'two-sum' });
+  await send({ kind: 'recordSubmission', slug: 'two-sum', title: 'Two Sum', url: URL_TS, status: 'Accepted', submissionId: '81', source: 'network' });
+  await send({ kind: 'grade', slug: 'two-sum', title: 'Two Sum', quality: 4, durationMs: 1000, url: URL_TS, factors: { startedAt: Date.now() - 1000 } });
+  const c = store.cards['two-sum'];
+  assert.ok(!c.noReview);
+  assert.equal(c.history.length, 1);
+  assert.ok(c.due > Date.now() && c.due < Date.now() + 365 * 864e5, 'scheduled normally');
+  assert.equal(c.submissions.length, 2);
+});
+
+test('Esc with nothing held is a no-op', async () => {
+  freshStore();
+  const r = await send({ kind: 'dismissRating', slug: 'coin-change' });
+  assert.equal(r.stored, false);
+  assert.ok(!store.cards?.['coin-change']);
 });
 
 test('rating a held problem turns it into a card with its submissions', async () => {

@@ -346,6 +346,7 @@
 
   function showPanel() {
     if (!root) ensureRoot();
+    setTitle(currentTitle());
     root.classList.remove('lcanki-hidden');
     refreshFromState();
   }
@@ -356,7 +357,7 @@
   // problem; outside a session, it's a plain close.
   function dismissPanel() {
     hidePanel();
-    // closing without rating: don't turn an untracked problem into a card
+    // closing without rating: keep the solve, but schedule no review
     send('dismissRating', { slug: currentSlug() });
     send('skipInSession');
   }
@@ -491,12 +492,13 @@
     root.classList.add('lcanki-hidden');
     // A small bar in the corner, not a modal: no backdrop, doesn't take focus,
     // the page stays usable behind it.
+    // Just the problem and 1–4. Esc (or the × that shows on hover) closes
+    // it: the solve is kept, but no review is scheduled.
     root.innerHTML = `
-      <div class="lcanki-panel lcanki-bar" role="group" aria-label="How hard was it?">
-        <span class="lcanki-q">How hard was it?</span>
+      <div class="lcanki-panel lcanki-bar" role="group" aria-label="How hard was it? 1 easy, 4 very hard">
+        <span class="lcanki-title"></span>
         <div class="lcanki-buttons"></div>
-        <button class="lcanki-close" title="Close (Esc)" aria-label="Close">×</button>
-        <span class="lcanki-scale-hint"><span>easy</span><span>very hard</span></span>
+        <button class="lcanki-close" title="Close: keep the solve, no review (Esc)" aria-label="Close">×</button>
       </div>
     `;
     document.body.appendChild(root);
