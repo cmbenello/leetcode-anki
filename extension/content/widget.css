@@ -252,7 +252,7 @@
   max-width: none;
   display: grid;
   grid-template-columns: auto auto auto auto;
-  grid-template-areas: "title star buttons close";
+  grid-template-areas: "title diff star close";
   align-items: center;
   column-gap: 14px;
   padding: 10px 8px 10px 18px;
@@ -302,3 +302,30 @@
 #lcanki-root .lcanki-bar .lcanki-close:focus-visible { opacity: 1; }
 #lcanki-root .lcanki-bar .lcanki-close:hover { color: rgba(206, 210, 217, 0.9); }
 #lcanki-root .lcanki-bar .lcanki-toast { grid-column: 1 / -1; }
+
+/* the problem's own difficulty, next to its title */
+#lcanki-root .lcanki-bar .lcanki-diff {
+  grid-area: diff; font: 500 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 4px 8px; border-radius: 999px; white-space: nowrap;
+  color: rgba(206, 210, 217, 0.8); background: rgba(206, 210, 217, 0.08);
+}
+#lcanki-root .lcanki-bar .lcanki-diff[hidden] { display: none; }
+#lcanki-root .lcanki-bar .lcanki-diff[data-level="easy"]   { color: #8fcfa0; background: rgba(126, 186, 138, 0.12); }
+#lcanki-root .lcanki-bar .lcanki-diff[data-level="medium"] { color: #e0a878; background: rgba(214, 160, 110, 0.12); }
+#lcanki-root .lcanki-bar .lcanki-diff[data-level="hard"]   { color: #e48c84; background: rgba(215, 122, 114, 0.13); }
+
+/* the key you pressed, flashed big in the middle of the screen */
+.lcanki-flash {
+  position: fixed; left: 50%; top: 45%; z-index: 2147483647;
+  transform: translate(-50%, -50%);
+  font: 600 120px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: rgba(236, 239, 244, 0.92);
+  text-shadow: 0 6px 30px rgba(0, 0, 0, 0.45);
+  pointer-events: none; user-select: none;
+  animation: lcanki-flash 0.7s ease-out forwards;
+}
+@keyframes lcanki-flash {
+  0%   { opacity: 0;    transform: translate(-50%, -50%) scale(0.82); }
+  18%  { opacity: 1;    transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0;    transform: translate(-50%, -50%) scale(1.08); }
+}

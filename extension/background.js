@@ -70,7 +70,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             predictions[b.id] = nextIntervalMin;
           }
           const starred = !!(card.starred || (await getPending())[slug]?.starred);
-          sendResponse({ ok: true, card, predictions, starred });
+          let difficulty = (await getMeta(slug))?.difficulty || null;
+          if (!difficulty) { await haveCatalog(); difficulty = (await catalogIndex()).bySlug[slug]?.difficulty || null; }
+          sendResponse({ ok: true, card, predictions, starred, difficulty });
           break;
         }
         case 'setStar': {

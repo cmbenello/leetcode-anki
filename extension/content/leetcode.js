@@ -17,6 +17,20 @@
   // 1–4 rate difficulty (1 = easy … 4 = very hard) while the bar is open —
   // never while you're typing in the editor or a text field.
   const KEY_TO_Q = { '1': 5, '2': 4, '3': 3, '4': 0 };
+  const Q_TO_KEY = { 5: '1', 4: '2', 3: '3', 0: '4' };
+  // The number you pressed flashes up mid-screen for a moment, so you know
+  // it landed without looking for the bar.
+  function flashKey(label) {
+    if (!label || !document.body) return;
+    document.querySelectorAll('.lcanki-flash').forEach(el => el.remove());
+    const el = document.createElement('div');
+    el.className = 'lcanki-flash';
+    el.textContent = label;
+    el.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(el);
+    el.addEventListener('animationend', () => el.remove());
+    setTimeout(() => el.remove(), 1500);
+  }
   function typingInto(t) {
     if (!t) return false;
     if (t.closest?.('.monaco-editor, .cm-editor')) return true;
@@ -493,30 +507,21 @@
     root.classList.add('lcanki-hidden');
     // A small bar in the corner, not a modal: no backdrop, doesn't take focus,
     // the page stays usable behind it.
-    // Just the problem and 1–4. Esc (or the × that shows on hover) closes
-    // it: the solve is kept, but no review is scheduled.
+    // Just the problem and its difficulty. You rate with the keys — 1 easy …
+    // 4 very hard, S stars it — and the number you press flashes up. Esc (or
+    // the × that shows on hover) closes it: the solve is kept, no review.
     root.innerHTML = `
-      <div class="lcanki-panel lcanki-bar" role="group" aria-label="How hard was it? 1 easy, 4 very hard">
+      <div class="lcanki-panel lcanki-bar" role="group" aria-label="How hard was it? Press 1 (easy) to 4 (very hard)"
+           title="1 easy · 2 ok · 3 hard · 4 very hard · S star · Esc close">
         <span class="lcanki-title"></span>
+        <span class="lcanki-diff" hidden></span>
         <button class="lcanki-star" type="button" aria-pressed="false" title="Come back to this (S)" aria-label="Star: come back to this">☆</button>
-        <div class="lcanki-buttons"></div>
         <button class="lcanki-close" title="Close: keep the solve, no review (Esc)" aria-label="Close">×</button>
       </div>
     `;
     document.body.appendChild(root);
     root.querySelector('.lcanki-close').addEventListener('click', dismissPanel);
     root.querySelector('.lcanki-star').addEventListener('click', toggleStar);
-    const btnRow = root.querySelector('.lcanki-buttons');
-    for (const spec of BUTTON_SPECS) {
-      const b = document.createElement('button');
-      b.className = 'lcanki-btn';
-      b.dataset.q = spec.q;
-      b.dataset.id = spec.id;
-      b.textContent = spec.label;
-      b.title = `${spec.label} — ${spec.hint}`;
-      b.addEventListener('click', () => onGrade(spec.q));
-      btnRow.appendChild(b);
-    }
   }
 
   // ★ "come back to this": saved straight away, kept whether you rate or close.
@@ -629,6 +634,12 @@
     const resp = await send('getCardWithPredictions', { slug, title: currentTitle() });
     if (!resp?.ok) return;
     showStar(resp.starred ?? resp.card?.starred);
+    const diff = root?.querySelector('.lcanki-diff');
+    if (diff) {
+      diff.textContent = resp.difficulty || '';
+      diff.hidden = !resp.difficulty;
+      diff.dataset.level = (resp.difficulty || '').toLowerCase();
+    }
     setIntervals(resp.predictions);
     const c = resp.card;
     if (!c || (!c.reps && !c.lapses))      setStreak('new');
@@ -683,6 +694,7 @@
 
     // Brief highlight flash so the user sees their click registered, then
     // close. Sync runs in the background; the user does not wait for it.
+    flashKey(Q_TO_KEY[quality]);
     const clickedBtn = root?.querySelector(`.lcanki-btn[data-q="${quality}"]`);
     clickedBtn?.classList.add('lcanki-btn-active');
     setTimeout(() => {
