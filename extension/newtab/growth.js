@@ -19,22 +19,11 @@
 // plain scrolling still scrolls the page. Geometry is built once per data
 // change into batched Path2D objects; zoom/pan only change the transform.
 
+import { ALIAS, primaryTopic } from '../lib/topics.js';
+
+export { primaryTopic };
 const TAU = Math.PI * 2;
 
-// Primary topic = the most "technique-like" tag a problem carries; generic
-// tags (array, string, hash table) only win when nothing more specific exists.
-const ALIAS = {
-  'breadth-first-search': 'graph', 'depth-first-search': 'graph', 'topological-sort': 'graph',
-  'shortest-path': 'graph', 'binary-tree': 'tree', 'binary-search-tree': 'tree',
-  'monotonic-stack': 'stack', 'memoization': 'dynamic-programming', 'heap-priority-queue': 'heap',
-  'union-find': 'graph', 'prefix-sum': 'array', 'sorting': 'array', 'matrix': 'array',
-  'counting': 'hash-table', 'bitmask': 'bit-manipulation', 'queue': 'stack',
-};
-const PRIORITY = [
-  'dynamic-programming', 'backtracking', 'graph', 'trie', 'heap', 'binary-search', 'sliding-window',
-  'two-pointers', 'linked-list', 'tree', 'stack', 'greedy', 'bit-manipulation', 'math',
-  'string', 'hash-table', 'array',
-];
 // Circle order groups related techniques next to each other.
 const DISPLAY = [
   'array', 'hash-table', 'string', 'two-pointers', 'sliding-window', 'stack', 'binary-search',
@@ -57,11 +46,6 @@ const TOPIC_HUE = {
 };
 const hsla = (h, l, a) => `hsla(${h}, 42%, ${l}%, ${a.toFixed(3)})`;
 
-export function primaryTopic(tags = []) {
-  const norm = new Set(tags.map(t => ALIAS[t] || t));
-  for (const t of PRIORITY) if (norm.has(t)) return t;
-  return 'other';
-}
 
 // Neutral colours come from the page's theme tokens (newtab.css).
 const TOKENS = {
@@ -342,7 +326,7 @@ function buildPaint(L, phase = null) {
  * Mount the view. Returns { update(view), fail(msg), retheme() }.
  * view: { goal, progress: { done, target, pct, daysLeft, perDay }, problems, now }
  */
-export function mountGrowth(root, { onOpen } = {}) {
+export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
   root.innerHTML = `
     <div class="growth-stage">
       <canvas class="growth-canvas"></canvas>
@@ -357,6 +341,7 @@ export function mountGrowth(root, { onOpen } = {}) {
         <button type="button" data-z="reset" title="Reset view" aria-label="Reset view">⤢</button>
       </div>
       <div class="growth-tip" hidden></div>
+      <div class="growth-suggest" role="dialog" aria-label="Suggested problem" hidden></div>
     </div>
     <div class="growth-phases" role="tablist" aria-label="Prep phase" hidden></div>`;
   const stage = root.querySelector('.growth-stage');
@@ -365,6 +350,8 @@ export function mountGrowth(root, { onOpen } = {}) {
   const tip = root.querySelector('.growth-tip');
   const zoomUi = root.querySelector('.growth-zoom');
   const phaseBar = root.querySelector('.growth-phases');
+  const sug = root.querySelector('.growth-suggest');
+  let labelBoxes = [], hoverLabel = null, sugState = null;
   let L = null, paint = null, view = null, hover = null, W = 0, H = 0, dpr = 1;
   // the picked prep phase (null = all), remembered per browser
   let phase = null;
@@ -486,13 +473,21 @@ export function mountGrowth(root, { onOpen } = {}) {
     // topic labels just outside each topic's dots, a constant size while zoomed
     ctx.font = `${12.5 / s}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = COLORS.label;
+    // each label is a button: its box (canvas CSS px) is kept for hit-testing
+    labelBoxes = [];
     for (const sec of L.sectors) {
       if (sec.span < 0.12) continue;
       const lx = cx + Math.cos(sec.mid) * sec.labelR, ly = cy + Math.sin(sec.mid) * sec.labelR;
-      ctx.textAlign = Math.abs(Math.cos(sec.mid)) < 0.3 ? 'center' : Math.cos(sec.mid) > 0 ? 'left' : 'right';
-      ctx.globalAlpha = phase && !sec.inCount ? 0.35 : 1;
-      ctx.fillText(`${topicLabel(sec.topic)} ${phase ? sec.inCount : sec.count}`, lx, ly);
+      const align = Math.abs(Math.cos(sec.mid)) < 0.3 ? 'center' : Math.cos(sec.mid) > 0 ? 'left' : 'right';
+      const text = `${topicLabel(sec.topic)} ${phase ? sec.inCount : sec.count}`;
+      ctx.textAlign = align;
+      const on = hoverLabel === sec.topic || sugState?.topic === sec.topic;
+      ctx.fillStyle = on ? COLORS.hi : COLORS.label;
+      ctx.globalAlpha = phase && !sec.inCount && !on ? 0.35 : 1;
+      ctx.fillText(text, lx, ly);
+      const w = ctx.measureText(text).width * s, sx = tx + lx * s, sy = ty + ly * s;
+      const x0 = align === 'left' ? sx : align === 'right' ? sx - w : sx - w / 2;
+      labelBoxes.push({ sec, x0: x0 - 6, x1: x0 + w + 6, y0: sy - 11, y1: sy + 11 });
     }
     ctx.globalAlpha = 1;
   }
@@ -574,6 +569,7 @@ export function mountGrowth(root, { onOpen } = {}) {
     clampPan();
     setZoomed();
     clearHover();
+    closeSuggest();
     placeHub();
     requestDraw();
   }
@@ -611,7 +607,7 @@ export function mountGrowth(root, { onOpen } = {}) {
   // cursor, leaving the window, switching tabs.
   function clearHover() {
     tip.hidden = true;
-    if (hover) { hover = null; requestDraw(); }
+    if (hover || hoverLabel) { hover = null; hoverLabel = null; requestDraw(); }
     if (!drag) canvas.style.cursor = s > 1 ? 'grab' : 'default';
   }
   canvas.addEventListener('pointerleave', () => { if (!drag) clearHover(); });
@@ -646,13 +642,100 @@ export function mountGrowth(root, { onOpen } = {}) {
       return;
     }
     const [mx, my] = local(e);
+    const lb = labelAt(mx, my);
+    if ((lb?.sec.topic ?? null) !== hoverLabel) { hoverLabel = lb?.sec.topic ?? null; requestDraw(); }
+    if (lb) {
+      if (hover) { hover = null; requestDraw(); }
+      tip.hidden = true;
+      canvas.style.cursor = 'pointer';
+      return;
+    }
     const nd = nodeAt(mx, my);
     if (nd !== hover) { hover = nd; requestDraw(); }
     canvas.style.cursor = nd ? 'pointer' : s > 1 ? 'grab' : 'default';
     if (!nd) { tip.hidden = true; return; }
     showTip(nd);
   });
-  canvas.addEventListener('click', () => { if (hover && onOpen && !drag?.moved) onOpen(hover); });
+  function labelAt(mx, my) {
+    return labelBoxes.find(b => mx >= b.x0 && mx <= b.x1 && my >= b.y0 && my <= b.y1) || null;
+  }
+  canvas.addEventListener('click', (e) => {
+    if (drag?.moved) return;
+    const [mx, my] = local(e);
+    const lb = labelAt(mx, my);
+    if (lb) { if (sugState?.topic === lb.sec.topic) closeSuggest(); else openSuggest(lb); return; }
+    if (sugState) { closeSuggest(); return; }
+    if (hover && onOpen) onOpen(hover);
+  });
+
+  // ------------------------------------------------- topic suggestions ----
+  // Click a topic's label: a suggested next problem on that arc, from the
+  // recommender (goal-aware). "another" steps through its top few.
+  async function openSuggest(box) {
+    const topic = box.sec.topic;
+    sugState = { topic, box, recs: null, i: 0 };
+    renderSuggest();
+    requestDraw();
+    let recs = [];
+    try { recs = (await onTopic?.(topic)) || []; } catch (e) { recs = []; }
+    if (sugState?.topic !== topic) return;           // closed or switched meanwhile
+    sugState.recs = recs;
+    renderSuggest();
+  }
+  function closeSuggest() {
+    if (!sugState) return;
+    sugState = null;
+    sug.hidden = true;
+    requestDraw();
+  }
+  function renderSuggest() {
+    const st = sugState;
+    sug.textContent = '';
+    const head = document.createElement('div');
+    head.className = 'sug-head';
+    head.textContent = `${topicLabel(st.topic)} · next up`;
+    sug.appendChild(head);
+    const rec = st.recs?.[st.i];
+    if (!st.recs) {
+      const p = document.createElement('div'); p.className = 'sug-meta'; p.textContent = 'finding one…'; sug.appendChild(p);
+    } else if (!rec) {
+      const p = document.createElement('div'); p.className = 'sug-meta'; p.textContent = 'Nothing left to suggest here.'; sug.appendChild(p);
+    } else {
+      const a = document.createElement('a');
+      a.className = 'sug-title';
+      a.href = rec.href || rec.url;
+      a.textContent = rec.title;
+      a.addEventListener('click', (e) => { if (onOpenSuggestion) { e.preventDefault(); onOpenSuggestion(rec); } });
+      const meta = document.createElement('div');
+      meta.className = 'sug-meta';
+      meta.textContent = [rec.difficulty, rec.p != null ? `${Math.round(rec.p * 100)}% you'd solve it` : null].filter(Boolean).join(' · ');
+      sug.append(a, meta);
+      if (rec.reason) {
+        const why = document.createElement('div'); why.className = 'sug-why'; why.textContent = rec.reason; sug.appendChild(why);
+      }
+      if (st.recs.length > 1) {
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'sug-more';
+        more.textContent = 'another';
+        more.addEventListener('click', () => { st.i = (st.i + 1) % st.recs.length; renderSuggest(); });
+        sug.appendChild(more);
+      }
+    }
+    sug.hidden = false;
+    // beside the label, kept inside the stage
+    const off = (stage.clientWidth - W) / 2, b = st.box;
+    const sw = sug.offsetWidth || 240, sh = sug.offsetHeight || 90;
+    let x = off + (b.x0 + b.x1) / 2 - sw / 2, y = b.y1 + 8;
+    if (y + sh > H) y = b.y0 - sh - 8;
+    x = Math.max(8, Math.min(stage.clientWidth - sw - 8, x));
+    sug.style.left = `${x}px`;
+    sug.style.top = `${Math.max(8, y)}px`;
+  }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSuggest(); });
+  document.addEventListener('pointerdown', (e) => {
+    if (sugState && !sug.contains(e.target) && e.target !== canvas) closeSuggest();
+  });
 
   function showTip(nd) {
     const when = nd.undated ? 'on NeetCode'
@@ -720,6 +803,7 @@ export function mountGrowth(root, { onOpen } = {}) {
       const sameGoal = view && v.goal?.id === view.goal?.id;
       view = v;
       if (phase && !phaseInfo(phase)) phase = null;   // that phase was deleted, or no longer has anything
+      if (sugState && !sameGoal) closeSuggest();
       readColors();
       resize();
       relayout();

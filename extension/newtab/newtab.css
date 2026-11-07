@@ -778,3 +778,30 @@ body { overflow-x: hidden; }   /* the full-bleed graph must not add a sideways s
 .growth-phases button:hover { color: rgba(var(--mono, 206, 210, 217), 0.8); }
 .growth-phases button.on { color: rgba(var(--mono, 206, 210, 217), 0.95); border-bottom-color: rgba(var(--mono, 206, 210, 217), 0.45); }
 .growth-phases .phase-count { font-size: 11px; font-variant-numeric: tabular-nums; opacity: 0.7; }
+
+/* ---- topic suggestion card (click a topic label on the rings) ---- */
+.growth-suggest {
+  position: absolute;
+  z-index: 6;
+  display: grid;
+  gap: 4px;
+  min-width: 200px;
+  max-width: 280px;
+  padding: 11px 13px 10px;
+  background: rgba(30, 31, 35, 0.98);
+  border: 1px solid rgba(var(--mono, 206, 210, 217), 0.14);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  font-size: 11.5px;
+  color: rgba(var(--mono, 206, 210, 217), 0.6);
+  animation: tip-in 0.12s ease-out;
+}
+.growth-suggest .sug-head { font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; color: rgba(var(--mono, 206, 210, 217), 0.45); }
+.growth-suggest .sug-title { color: rgba(var(--mono, 206, 210, 217), 0.96); font-size: 13.5px; font-weight: 600; text-decoration: none; }
+.growth-suggest .sug-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.growth-suggest .sug-why { color: rgba(var(--mono, 206, 210, 217), 0.48); }
+.growth-suggest .sug-more {
+  justify-self: start; margin-top: 2px; padding: 2px 0; background: none; border: 0; font: inherit;
+  color: rgba(var(--mono, 206, 210, 217), 0.55); cursor: pointer;
+}
+.growth-suggest .sug-more:hover { color: rgba(var(--mono, 206, 210, 217), 0.9); }

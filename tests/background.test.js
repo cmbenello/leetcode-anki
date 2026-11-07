@@ -6,6 +6,7 @@
 // verdict dedupe, off-page verdicts, stale titles, local day keys, and the
 // logged prediction leaking the outcome it predicts.
 import assert from 'node:assert/strict';
+import { primaryTopic } from '../extension/lib/topics.js';
 import { eloP, priorBeta } from '../extension/lib/model.js';
 
 const store = {};
@@ -262,6 +263,20 @@ test('getHome: goals and the active goal\'s view in one answer', async () => {
   assert.equal(h.view.goal.id, g.goal.id, 'the view is for the active goal');
   assert.ok(h.view.problems.some(p => p.slug === 'two-sum'));
   assert.ok(Array.isArray(h.view.phases));
+});
+
+test('topic suggestions: only problems on that arc, inside the active goal when it has some', async () => {
+  freshStore();
+  let r = await send({ kind: 'getRecommendations', topic: 'dynamic-programming', k: 5 });
+  assert.ok(r.ok && r.recs.length > 0, 'something to suggest');
+  for (const x of r.recs) assert.equal(primaryTopic(x.tags), 'dynamic-programming', `${x.slug} is not a DP problem`);
+  const g = await send({ kind: 'saveGoal', goal: { preset: 'blind75' } });
+  r = await send({ kind: 'getRecommendations', id: g.goal.id, topic: 'graph', k: 5 });
+  assert.ok(r.recs.length > 0);
+  for (const x of r.recs) {
+    assert.equal(primaryTopic(x.tags), 'graph');
+    assert.ok(x.onGoal, `${x.slug} should be from Blind 75`);
+  }
 });
 
 // ---- prep phases ----

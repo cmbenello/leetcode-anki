@@ -17,6 +17,7 @@ import { dayKeyMs, todayKey, lastNDayKeys } from './lib/dates.js';
 import { fetchQuestionMeta, fetchCatalog } from './lib/leetcode-api.js';
 import { sanitizeCards } from './lib/cards.js';
 import { validatePhases, normalizePhases, phaseFor, phaseSummary } from './lib/phases.js';
+import { primaryTopic, topicTags } from './lib/topics.js';
 
 const LANG_EXT = {
   python: 'py', python3: 'py',
@@ -148,7 +149,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case 'getRecommendations': {
-          sendResponse(await getRecommendations(msg.id, msg.k));
+          sendResponse(await getRecommendations(msg.id, msg.k, msg.topic || null));
           break;
         }
         case 'getPhases': {
@@ -1200,18 +1201,28 @@ async function getGoalView(id) {
   return { ok: true, goal, progress, problems, phases: phaseSummary(phases, problems), now: Date.now() };
 }
 
-async function getRecommendations(id, k = 5) {
+async function getRecommendations(id, k = 5, topic = null) {
   ensureCatalog();                                   // refresh in the background if stale
   const { st, attempts, known, cat } = await learnerState();
   const nc = await neetcodeIndex();
   const goal = id ? await goalById(id) : null;
   const catalog = cat.rows.length ? cat.rows : Object.values(known);
-  const modelGoal = goal && goal.type !== 'all'
-    ? { tags: goal.type === 'tags' ? goal.tags : [], matches: (it) => goalMatches(goal, it.slug, it.tags || []) }
-    : null;
+  const goalMatch = goal && goal.type !== 'all' ? (it) => goalMatches(goal, it.slug, it.tags || []) : null;
+  let modelGoal = goalMatch ? { tags: goal.type === 'tags' ? goal.tags : [], matches: goalMatch } : null;
+  // A topic (clicked on the graph) means problems on that arc only: within
+  // the active goal when it still has some there, else from anywhere.
+  const inTopic = topic ? (it) => primaryTopic(it.tags || []) === topic : null;
+  if (topic) modelGoal = { tags: topicTags(topic), matches: goalMatch ? (it) => inTopic(it) && goalMatch(it) : inTopic };
   // Seeded per day + per attempt, so the list is stable until you do something.
-  const seed = [...`${todayKey()}:${attempts.length}:${id || ''}`].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7);
-  const recs = recommend({ st, catalog, known, rng: mulberry32(seed), goal: modelGoal, k: Math.min(10, k || 5) });
+  const seed = [...`${todayKey()}:${attempts.length}:${id || ''}:${topic || ''}`].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7);
+  const kk = Math.min(10, k || 5);
+  let recs = recommend({ st, catalog, known, rng: mulberry32(seed), goal: modelGoal, k: kk });
+  if (topic) {
+    recs = recs.filter(r => r.onGoal);
+    if (!recs.length && goalMatch) {
+      recs = recommend({ st, catalog, known, rng: mulberry32(seed), goal: { tags: topicTags(topic), matches: inTopic }, k: kk }).filter(r => r.onGoal);
+    }
+  }
   return {
     ok: true,
     recs: recs.map(r => ({
