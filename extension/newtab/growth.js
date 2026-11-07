@@ -12,6 +12,9 @@
 //   dots       colour = topic (brighter where you've done more); a touch
 //              brighter if recent
 //
+//   phases     pick a prep phase below the graph to light up just the problems
+//              first solved in it; the rest fade back but keep their places
+//
 // Zoom with a pinch or ⌘/Ctrl+scroll, drag to pan, double-click to zoom in;
 // plain scrolling still scrolls the page. Geometry is built once per data
 // change into batched Path2D objects; zoom/pan only change the transform.
@@ -305,8 +308,14 @@ function linkPath(path, L, a, b) {
   }
 }
 
-/** Everything static, batched once per data change (content coordinates). */
-function buildPaint(L) {
+/**
+ * Everything static, batched once per data or phase change (content
+ * coordinates). With a phase picked, problems outside it — and links that
+ * touch them — go into separate faint batches.
+ */
+function buildPaint(L, phase = null) {
+  for (const nd of L.nodes) nd.inPhase = !phase || nd.phase === phase;
+  for (const sec of L.sectors) sec.inCount = sec.nodes.reduce((n, nd) => n + (nd.inPhase ? 1 : 0), 0);
   const paint = { tone: {} };
   for (const sec of L.sectors) {
     const I = sec.intensity;
@@ -318,9 +327,14 @@ function buildPaint(L) {
     };
   }
   paint.links = new Path2D();
-  for (const nd of L.nodes) if (nd.par >= 0) linkPath(paint.links, L, L.nodes[nd.par], nd);
+  paint.linksDim = new Path2D();
+  for (const nd of L.nodes) {
+    if (nd.par < 0) continue;
+    const pa = L.nodes[nd.par];
+    linkPath(nd.inPhase && pa.inPhase ? paint.links : paint.linksDim, L, pa, nd);
+  }
   paint.cross = new Path2D();
-  for (const { a, b } of L.crossLinks) linkPath(paint.cross, L, a, b);
+  for (const { a, b } of L.crossLinks) if (a.inPhase && b.inPhase) linkPath(paint.cross, L, a, b);
   return paint;
 }
 
@@ -343,13 +357,19 @@ export function mountGrowth(root, { onOpen } = {}) {
         <button type="button" data-z="reset" title="Reset view" aria-label="Reset view">⤢</button>
       </div>
       <div class="growth-tip" hidden></div>
-    </div>`;
+    </div>
+    <div class="growth-phases" role="tablist" aria-label="Prep phase" hidden></div>`;
   const stage = root.querySelector('.growth-stage');
   const canvas = root.querySelector('.growth-canvas');
   const hub = root.querySelector('.growth-hub');
   const tip = root.querySelector('.growth-tip');
   const zoomUi = root.querySelector('.growth-zoom');
+  const phaseBar = root.querySelector('.growth-phases');
   let L = null, paint = null, view = null, hover = null, W = 0, H = 0, dpr = 1;
+  // the picked prep phase (null = all), remembered per browser
+  let phase = null;
+  try { phase = localStorage.getItem('lcanki.phase') || null; } catch (e) { /* storage blocked */ }
+  const phaseInfo = (id) => view?.phases?.find(p => p.id === id) || null;
   // view transform: screen = content * s + (tx, ty)
   let s = 1, tx = 0, ty = 0;
   const MIN_S = 1, MAX_S = 6;
@@ -368,7 +388,7 @@ export function mountGrowth(root, { onOpen } = {}) {
     L = view
       ? layout(view.problems.map(p => ({ ...p })), { width: W, height: H, target: view.progress.target, now: view.now })
       : layout([], { width: W, height: H, target: 1 });
-    paint = buildPaint(L);
+    paint = buildPaint(L, phase);
   }
 
   // The canvas is centred in the stage; the hub sits over the centre and
@@ -411,8 +431,9 @@ export function mountGrowth(root, { onOpen } = {}) {
     ctx.strokeStyle = 'rgba(206,210,217,0.06)';
     ctx.lineWidth = 0.7 / k;
     ctx.stroke(paint.cross);
-    ctx.strokeStyle = 'rgba(206,210,217,0.2)';
     ctx.lineWidth = 0.9 / k;
+    if (phase) { ctx.strokeStyle = 'rgba(206,210,217,0.035)'; ctx.stroke(paint.linksDim); }
+    ctx.strokeStyle = phase ? 'rgba(206,210,217,0.26)' : 'rgba(206,210,217,0.2)';
     ctx.stroke(paint.links);
 
     // dots: one fill per (topic, tone)
@@ -421,7 +442,7 @@ export function mountGrowth(root, { onOpen } = {}) {
         let any = false;
         ctx.beginPath();
         for (const nd of sec.nodes) {
-          if (nd.tone !== tone) continue;
+          if (nd.tone !== tone || !nd.inPhase) continue;
           const r = nd.dot / k;
           ctx.moveTo(nd.x + r, nd.y);
           ctx.arc(nd.x, nd.y, r, 0, TAU);
@@ -431,6 +452,19 @@ export function mountGrowth(root, { onOpen } = {}) {
         ctx.fillStyle = paint.tone[sec.topic][tone];
         ctx.fill();
       }
+    }
+
+    if (phase) {
+      // outside the phase: same places, one faint grey
+      ctx.beginPath();
+      for (const nd of L.nodes) {
+        if (nd.inPhase) continue;
+        const r = nd.dot / k;
+        ctx.moveTo(nd.x + r, nd.y);
+        ctx.arc(nd.x, nd.y, r, 0, TAU);
+      }
+      ctx.fillStyle = 'rgba(206,210,217,0.13)';
+      ctx.fill();
     }
 
     if (hover) {
@@ -457,11 +491,23 @@ export function mountGrowth(root, { onOpen } = {}) {
       if (sec.span < 0.12) continue;
       const lx = cx + Math.cos(sec.mid) * sec.labelR, ly = cy + Math.sin(sec.mid) * sec.labelR;
       ctx.textAlign = Math.abs(Math.cos(sec.mid)) < 0.3 ? 'center' : Math.cos(sec.mid) > 0 ? 'left' : 'right';
-      ctx.fillText(`${topicLabel(sec.topic)} ${sec.count}`, lx, ly);
+      ctx.globalAlpha = phase && !sec.inCount ? 0.35 : 1;
+      ctx.fillText(`${topicLabel(sec.topic)} ${phase ? sec.inCount : sec.count}`, lx, ly);
     }
+    ctx.globalAlpha = 1;
   }
 
+  const fmtDay = (d) => new Date(`${d}T12:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   function setHub() {
+    const ph = phase && phaseInfo(phase);
+    if (ph) {
+      root.querySelector('.growth-goal').textContent = ph.name;
+      root.querySelector('.growth-done').textContent = ph.count;
+      root.querySelector('.growth-target').textContent = '';
+      root.querySelector('.growth-pace').textContent = !ph.from ? 'outside any phase'
+        : ph.to ? `${fmtDay(ph.from)} – ${fmtDay(ph.to)}` : `since ${fmtDay(ph.from)}`;
+      return;
+    }
     const g = view.goal, p = view.progress;
     root.querySelector('.growth-goal').textContent = g ? g.name : 'All practice';
     root.querySelector('.growth-done').textContent = p.done;
@@ -473,6 +519,37 @@ export function mountGrowth(root, { onOpen } = {}) {
         : ` · ${p.perDay < 1 ? `1 every ${Math.round(1 / p.perDay)}d` : `${p.perDay.toFixed(1)}/day`}`;
     }
     root.querySelector('.growth-pace').textContent = pace;
+  }
+
+  // ------------------------------------------------------------ phases ----
+  function renderPhases() {
+    const list = view?.phases || [];
+    phaseBar.textContent = '';
+    phaseBar.hidden = !list.some(p => p.id !== 'unstructured');
+    if (phaseBar.hidden) return;
+    const tab = (id, name, count) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(phase === id));
+      b.className = phase === id ? 'on' : '';
+      const n = document.createElement('span'); n.textContent = name;
+      const c = document.createElement('span'); c.className = 'phase-count'; c.textContent = count;
+      b.append(n, c);
+      b.addEventListener('click', () => setPhase(phase === id || id == null ? null : id));
+      phaseBar.appendChild(b);
+    };
+    tab(null, 'All', view.problems.length);
+    for (const p of list) tab(p.id, p.name, p.count);
+  }
+  function setPhase(id) {
+    phase = id;
+    try { if (id) localStorage.setItem('lcanki.phase', id); else localStorage.removeItem('lcanki.phase'); } catch (e) { /* fine */ }
+    paint = buildPaint(L, phase);
+    clearHover();
+    setHub();
+    renderPhases();
+    requestDraw();
   }
 
   // ---------------------------------------------------------- zoom / pan ----
@@ -552,6 +629,7 @@ export function mountGrowth(root, { onOpen } = {}) {
     const k = Math.sqrt(s);
     let best = null, bd = Infinity;
     for (const nd of L.nodes) {
+      if (!nd.inPhase) continue;                 // faded problems don't pop up
       const d = Math.hypot(nd.x - x, nd.y - y);
       if (d <= nd.dot / k + 4 / s && d < bd) { bd = d; best = nd; }
     }
@@ -591,7 +669,8 @@ export function mountGrowth(root, { onOpen } = {}) {
     const meta = document.createElement('div');
     meta.className = 'tip-meta';
     const due = nd.due != null && nd.due <= Date.now();
-    meta.textContent = [nd.difficulty, topicLabel(nd.sec), when, due ? 'due' : null].filter(Boolean).join(' · ');
+    const ph = view?.phases?.some(p => p.id !== 'unstructured') ? phaseInfo(nd.phase)?.name : null;
+    meta.textContent = [nd.difficulty, topicLabel(nd.sec), when, ph, due ? 'due' : null].filter(Boolean).join(' · ');
     tip.append(head, meta);
     if (nd.parentTitle) {
       const from = document.createElement('div');
@@ -640,6 +719,7 @@ export function mountGrowth(root, { onOpen } = {}) {
     update(v) {
       const sameGoal = view && v.goal?.id === view.goal?.id;
       view = v;
+      if (phase && !phaseInfo(phase)) phase = null;   // that phase was deleted, or no longer has anything
       readColors();
       resize();
       relayout();
@@ -647,6 +727,7 @@ export function mountGrowth(root, { onOpen } = {}) {
       if (!sameGoal) { s = 1; tx = 0; ty = 0; setZoomed(); }
       placeHub();
       setHub();
+      renderPhases();
       draw();
     },
   };

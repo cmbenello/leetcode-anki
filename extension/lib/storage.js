@@ -15,6 +15,7 @@ const KEYS = {
   GOALS: 'goals',
   ACTIVE_GOAL: 'activeGoal',
   CATALOG: 'catalog',          // { fetchedAt, rows: [...] } — see lib/leetcode-api.js
+  PHASES: 'phases',            // [{ id, name, from, to }] — see lib/phases.js
 };
 
 const DEFAULT_SETTINGS = {
@@ -141,5 +142,10 @@ export async function setActiveGoalId(id)    { return set(KEYS.ACTIVE_GOAL, id);
 // ---------- problem catalog ----------
 export async function getCatalog()           { return get(KEYS.CATALOG, null); }
 export async function setCatalog(rows)       { return set(KEYS.CATALOG, { fetchedAt: Date.now(), rows }); }
+
+// ---------- prep phases ----------
+// undefined = never set (the background may seed it); [] = deliberately none
+export async function getPhasesRaw()         { return (await chrome.storage.local.get(KEYS.PHASES))[KEYS.PHASES]; }
+export async function setPhases(phases)      { return set(KEYS.PHASES, phases); }
 
 export { KEYS, DEFAULT_SETTINGS };

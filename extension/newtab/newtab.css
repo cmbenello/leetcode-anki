@@ -750,3 +750,31 @@ body { overflow-x: hidden; }   /* the full-bleed graph must not add a sideways s
 .growth-tip .tip-from { padding-left: 14px; color: rgba(var(--mono, 206, 210, 217), 0.78); }
 .growth-tip .tip-from span { color: rgba(var(--mono, 206, 210, 217), 0.48); }
 .growth-tip .tip-also { padding-left: 14px; color: rgba(var(--mono, 206, 210, 217), 0.48); }
+
+/* ---- prep phases: quiet text tabs under the graph ---- */
+.growth { flex-direction: column; }   /* the tabs stack under the stage, not beside it */
+.growth-phases {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 2px auto 0;
+  padding: 0 16px;
+}
+.growth-phases button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  padding: 4px 1px;
+  font: inherit;
+  font-size: 12.5px;
+  color: rgba(var(--mono, 206, 210, 217), 0.45);
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.growth-phases button:hover { color: rgba(var(--mono, 206, 210, 217), 0.8); }
+.growth-phases button.on { color: rgba(var(--mono, 206, 210, 217), 0.95); border-bottom-color: rgba(var(--mono, 206, 210, 217), 0.45); }
+.growth-phases .phase-count { font-size: 11px; font-variant-numeric: tabular-nums; opacity: 0.7; }

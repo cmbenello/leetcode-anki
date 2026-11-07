@@ -27,8 +27,14 @@ globalThis.chrome = {
 // chrome.runtime.getURL + fetch would inside the extension.
 import { readFileSync } from 'node:fs';
 const EXT_DIR = new URL('../extension/', import.meta.url);
+// A personal, git-ignored *.local.json never leaks into tests: a test sets
+// `localSeed` when it wants one.
+let localSeed = null;
 globalThis.fetch = async (url) => {
   const u = String(url);
+  if (/\.local\.json$/.test(u)) {
+    return localSeed ? { ok: true, status: 200, json: async () => localSeed } : { ok: false, status: 404, json: async () => ({}) };
+  }
   if (!/^https?:/.test(u)) {
     const body = readFileSync(new URL(u, EXT_DIR), 'utf8');
     return { ok: true, status: 200, json: async () => JSON.parse(body), text: async () => body };
@@ -244,6 +250,61 @@ test('NeetCode sync: a problem also solved on LeetCode keeps its real date', asy
   assert.ok(!p.undated && p.t > 0);
   const rows = (await send({ kind: 'exportDrill' })).jsonl.trim().split('\n').map(JSON.parse);
   assert.ok(!rows.some(x => x.kind === 'neetcode'), 'no extra undated attempt when a dated one exists');
+});
+
+// ---- prep phases ----
+const solvedOn = (slug, d, id) => ({ slug, title: slug, site: 'leetcode', reps: 1, lapses: 0, due: Date.now() + 864e5,
+  history: [{ t: d.getTime(), q: 4 }], submissions: [{ t: d.getTime(), status: 'Accepted', id }] });
+
+test('prep phases: grouped by LOCAL first-solve day; outside a phase or undated is Unstructured', async () => {
+  freshStore();
+  let r = await send({ kind: 'savePhases', phases: [
+    { name: 'Company B', from: '2026-08-24' },
+    { name: 'Company A', from: '2026-03-02', to: '2026-04-17' },
+  ] });
+  assert.ok(r.ok, r.error);
+  assert.deepEqual(r.phases.map(p => p.name), ['Company A', 'Company B'], 'kept in date order');
+  store.cards = {
+    'two-sum': solvedOn('two-sum', new Date(2026, 3, 17, 23, 30), '1'),        // last evening of A: still A
+    'coin-change': solvedOn('coin-change', new Date(2026, 6, 1, 12), '2'),     // between phases
+    'house-robber': solvedOn('house-robber', new Date(2026, 9, 20, 9), '3'),   // B, ongoing
+    'contains-duplicate': solvedOn('contains-duplicate', new Date(2025, 0, 5, 12), '4'),
+  };
+  await send({ kind: 'neetcodeProgress', slugs: ['valid-anagram'], account: true });   // undated
+  const v = await send({ kind: 'getGoalView', id: null });
+  const ph = Object.fromEntries(v.problems.map(p => [p.slug, p.phase]));
+  assert.equal(ph['two-sum'], 'company-a');
+  assert.equal(ph['coin-change'], 'unstructured');
+  assert.equal(ph['house-robber'], 'company-b');
+  assert.equal(ph['contains-duplicate'], 'unstructured');
+  assert.equal(ph['valid-anagram'], 'unstructured');
+  assert.deepEqual(v.phases.map(p => [p.name, p.count]), [['Company A', 1], ['Company B', 1], ['Unstructured', 3]]);
+});
+
+test('prep phases: first run seeds from data/phases.local.json, and only once', async () => {
+  freshStore();
+  localSeed = { phases: [{ name: 'Seeded', from: '2026-01-01', to: '2026-02-01' }] };
+  try {
+    let r = await send({ kind: 'getPhases' });
+    assert.deepEqual(r.phases.map(p => p.name), ['Seeded']);
+    localSeed = { phases: [{ name: 'Changed', from: '2026-03-01' }] };
+    r = await send({ kind: 'getPhases' });
+    assert.deepEqual(r.phases.map(p => p.name), ['Seeded'], 'stored phases win over the seed file');
+    await send({ kind: 'savePhases', phases: [] });
+    r = await send({ kind: 'getPhases' });
+    assert.deepEqual(r.phases, [], 'deleting them all is respected, not re-seeded');
+  } finally { localSeed = null; }
+  freshStore();
+  assert.deepEqual((await send({ kind: 'getPhases' })).phases, [], 'no seed file: no phases');
+});
+
+test('prep phases: bad rows are refused with a reason, nothing saved', async () => {
+  freshStore();
+  await send({ kind: 'savePhases', phases: [{ name: 'Keep', from: '2026-01-01' }] });
+  const r = await send({ kind: 'savePhases', phases: [{ name: 'Oops', from: '2026-05-10', to: '2026-04-01' }] });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /ends before it starts/);
+  assert.deepEqual((await send({ kind: 'getPhases' })).phases.map(p => p.name), ['Keep']);
 });
 
 test('NeetCode 150 / 250 goal presets', async () => {

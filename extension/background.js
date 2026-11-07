@@ -8,6 +8,7 @@ import {
   getMeta, getAllMeta, upsertMeta,
   getSchemaVersion, setSchemaVersion,
   getGoals, setGoals, getActiveGoalId, setActiveGoalId, getCatalog, setCatalog,
+  getPhasesRaw, setPhases,
 } from './lib/storage.js';
 import { replay, predict, recommend, evidenceFor, mastery, calibration, mulberry32 } from './lib/model.js';
 import { makeGoal, goalMatches, goalProgress, PRESETS, INTERVIEW_TAGS, parseSlugList } from './lib/goals.js';
@@ -15,6 +16,7 @@ import { commitWithRetry } from './lib/github.js';
 import { dayKeyMs, todayKey, lastNDayKeys } from './lib/dates.js';
 import { fetchQuestionMeta, fetchCatalog } from './lib/leetcode-api.js';
 import { sanitizeCards } from './lib/cards.js';
+import { validatePhases, normalizePhases, phaseFor, phaseSummary } from './lib/phases.js';
 
 const LANG_EXT = {
   python: 'py', python3: 'py',
@@ -143,6 +145,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         case 'getRecommendations': {
           sendResponse(await getRecommendations(msg.id, msg.k));
+          break;
+        }
+        case 'getPhases': {
+          sendResponse({ ok: true, phases: await loadPhases() });
+          break;
+        }
+        case 'savePhases': {
+          sendResponse(await savePhases(msg.phases));
           break;
         }
         case 'dismissRating': {
@@ -1114,15 +1124,42 @@ function backfillSimilar(cards) {
   })();
 }
 
-/** Problems for the radial growth view, oldest first. */
+// ---------- prep phases ----------
+// Named date windows ("Company A 2026") that group problems by the day you
+// first solved them; the rest is "Unstructured". Stored in chrome.storage and
+// edited in Options. The very first time, a personal seed can come from
+// data/phases.local.json (git-ignored; format in data/phases.example.json),
+// so your own timeline never lands in the repo.
+async function loadPhases() {
+  const raw = await getPhasesRaw();
+  if (raw !== undefined) return normalizePhases(raw);
+  let seed = [];
+  try {
+    const r = await fetch(chrome.runtime.getURL('data/phases.local.json'));
+    if (r.ok) seed = (await r.json()).phases || [];
+  } catch (e) { /* no seed file: start with none */ }
+  const phases = normalizePhases(seed);
+  await setPhases(phases);
+  return phases;
+}
+
+async function savePhases(list) {
+  const r = validatePhases(list);
+  if (!r.ok) return r;
+  await setPhases(r.phases);
+  return { ok: true, phases: r.phases };
+}
+
+/** Problems for the radial growth view, oldest first, each tagged with its phase. */
 async function getGoalView(id) {
-  const [cards, metaAll, nc] = [await getCards(), await richMeta(), await neetcodeIndex()];
+  const [cards, metaAll, nc, phases] = [await getCards(), await richMeta(), await neetcodeIndex(), await loadPhases()];
   backfillSimilar(cards);
   const goal = id ? await goalById(id) : null;
   const all = solvedProblems(cards, metaAll, nc);
   const problems = goal ? all.filter(p => goalMatches(goal, p.slug, p.tags)) : all;
+  for (const p of problems) p.phase = phaseFor(phases, p.t, p.undated);
   const progress = goal ? goalProgress(goal, all) : { done: all.length, target: Math.max(all.length, 1), pct: 1 };
-  return { ok: true, goal, progress, problems, now: Date.now() };
+  return { ok: true, goal, progress, problems, phases: phaseSummary(phases, problems), now: Date.now() };
 }
 
 async function getRecommendations(id, k = 5) {

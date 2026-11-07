@@ -48,6 +48,7 @@ leetcode-anki/
 │   │   ├── sm2.js               # scheduler (+ ease that adapts to lapses), pure
 │   │   ├── model.js             # learner model + recommender, ported from Drill, pure
 │   │   ├── goals.js             # goal matching/progress + Blind 75, pure
+│   │   ├── phases.js            # prep phases: date windows → problems, pure
 │   │   ├── dates.js             # LOCAL day keys — single source of truth
 │   │   ├── storage.js           # chrome.storage wrapper
 │   │   ├── github.js            # Git Data API: blob → tree → commit → ref
@@ -126,6 +127,8 @@ leetcode-anki/
 - Submission verdicts come from the judge endpoint via `content/inject.js`; the DOM observer is a fallback only.
 - `lib/model.js` mirrors Drill (`~/Coding/embed/src/embed/engine.py`); keep constants in sync and cite the experiment.
 - A logged `pPred` must be the prediction as of the attempt's START (`factors.startedAt`), from earlier attempts only — the attempt's own verdict is stored before the grade and would otherwise leak in. Only `pPredV: 2` entries are trusted; `tests/background.test.js` guards this.
+- Prep phases (`lib/phases.js`) group problems by LOCAL first-solve day. The repo is public: a personal timeline lives only in chrome.storage or the git-ignored `data/phases.local.json`, never in source or tests.
+- Anything toggled with the `hidden` attribute relies on the global `[hidden] { display: none !important; }`. Theme rules set `display` and used to out-rank `[hidden]`.
 - Manual test loop: load unpacked → visit `leetcode.com/problems/two-sum` → grade → check `chrome.storage.local` in DevTools → check GitHub repo for commit.
 - Don't add a build step. If you want TypeScript, write `.js` with JSDoc types.
 - Mark `SPEC.md` checklist items with `[x]` when done.

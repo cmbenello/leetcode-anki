@@ -222,6 +222,62 @@ refreshImport();
     : 'Not synced yet. Open neetcode.io and visit a practice list.';
 })();
 
+// ---------- prep phases ----------
+function phaseRow(p = {}) {
+  const row = document.createElement('div');
+  row.className = 'phase-row';
+  const field = (label, type, value, ph) => {
+    const l = document.createElement('label');
+    l.textContent = label;
+    const i = document.createElement('input');
+    i.type = type; i.value = value || ''; if (ph) i.placeholder = ph;
+    l.appendChild(i);
+    return [l, i];
+  };
+  const [ln, name] = field('Name', 'text', p.name, 'Interview loop 2027');
+  const [lf, from] = field('From', 'date', p.from);
+  const [lt, to] = field('To (blank = ongoing)', 'date', p.to);
+  name.maxLength = 40;
+  const del = document.createElement('button');
+  del.type = 'button'; del.textContent = '×'; del.title = 'Remove phase';
+  del.addEventListener('click', () => { row.remove(); showPhaseEmpty(); });
+  row.append(ln, lf, lt, del);
+  row.read = () => ({ id: p.id, name: name.value, from: from.value, to: to.value });
+  return row;
+}
+function showPhaseEmpty() {
+  const wrap = $('#phase-rows');
+  wrap.querySelector('.phase-empty')?.remove();
+  if (!wrap.querySelector('.phase-row')) {
+    const e = document.createElement('p');
+    e.className = 'phase-empty';
+    e.textContent = 'No phases yet: everything counts as Unstructured.';
+    wrap.appendChild(e);
+  }
+}
+async function loadPhaseRows() {
+  const r = await send('getPhases');
+  const wrap = $('#phase-rows');
+  wrap.textContent = '';
+  if (!r?.ok) { setStatus($('#phase-status'), `couldn’t load phases: ${r?.error || 'no answer'}`, 'err'); return; }
+  for (const p of r.phases) wrap.appendChild(phaseRow(p));
+  showPhaseEmpty();
+}
+$('#phase-add').addEventListener('click', () => {
+  const row = phaseRow();
+  $('#phase-rows').appendChild(row);
+  showPhaseEmpty();
+  row.querySelector('input').focus();
+});
+$('#phase-save').addEventListener('click', async () => {
+  const list = [...document.querySelectorAll('.phase-row')].map(r => r.read());
+  const r = await send('savePhases', { phases: list });
+  if (!r?.ok) { setStatus($('#phase-status'), r?.error || 'couldn’t save', 'err'); return; }
+  setStatus($('#phase-status'), `saved ${r.phases.length} phase${r.phases.length === 1 ? '' : 's'}.`, 'ok');
+  loadPhaseRows();
+});
+loadPhaseRows();
+
 $('#import').addEventListener('click', () => $('#import-file').click());
 $('#import-file').addEventListener('change', async (ev) => {
   const file = ev.target.files?.[0];

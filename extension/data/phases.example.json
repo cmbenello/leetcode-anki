@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy to phases.local.json (git-ignored) to seed your prep phases the first time the extension runs. Dates are local days; leave \"to\" out while a phase is still going. After that, edit phases in Options.",
+  "phases": [
+    { "name": "Company A 2026", "from": "2026-01-12", "to": "2026-03-06" },
+    { "name": "Company B 2026", "from": "2026-09-01" }
+  ]
+}

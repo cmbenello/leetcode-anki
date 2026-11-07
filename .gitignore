@@ -5,3 +5,5 @@ node_modules/
 .env.local
 .vscode/
 .idea/
+# personal prep-phase seed (your own recruiting timeline): see extension/data/phases.example.json
+extension/data/*.local.json
