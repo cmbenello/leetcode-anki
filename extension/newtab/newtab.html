@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>New Tab</title>
+  <link rel="stylesheet" href="newtab.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <div class="title-block">
+        <h1 id="greeting">Today</h1>
+        <p id="date" class="sub"></p>
+      </div>
+      <div class="header-actions">
+        <div id="session-controls" class="session-controls">
+          <button id="start-session" class="primary">Start session</button>
+          <button id="end-session-home" class="end-btn hidden">End</button>
+        </div>
+        <a id="open-options" href="#" title="Settings">⚙</a>
+      </div>
+    </header>
+
+    <section class="goals">
+      <div id="goal-pills" class="goal-pills"></div>
+
+      <form id="goal-form" class="goal-form" hidden autocomplete="off">
+        <input id="goal-name" class="goal-name" placeholder="Prepare for Google interview" maxlength="60" required />
+        <div id="goal-type" class="seg" role="radiogroup" aria-label="Goal type">
+          <button type="button" data-type="tags" class="on">Topics</button>
+          <button type="button" data-type="blind75">Blind 75</button>
+          <button type="button" data-type="list">My list</button>
+          <button type="button" data-type="all">Everything</button>
+        </div>
+        <div class="goal-row" data-for="tags"><div id="goal-tags" class="chips"></div></div>
+        <div class="goal-row" data-for="list">
+          <textarea id="goal-slugs" rows="3" placeholder="Paste LeetCode problem links or slugs, one per line"></textarea>
+        </div>
+        <div class="goal-row goal-inline">
+          <label data-for="tags all">Target <input id="goal-target" type="number" min="1" value="100" /></label>
+          <label>Deadline <input id="goal-deadline" type="date" /></label>
+        </div>
+        <div class="goal-actions">
+          <button type="submit" class="primary">Plant goal</button>
+          <button type="button" id="goal-cancel" class="ghost">Cancel</button>
+          <button type="button" id="goal-delete" class="ghost danger" hidden>Delete goal</button>
+          <span id="goal-error" class="goal-error"></span>
+        </div>
+      </form>
+
+      <div id="growth" class="growth"></div>
+    </section>
+
+    <section class="stats-row">
+      <div class="stat"><div class="num" id="stat-due">0</div><div class="label">due</div></div>
+      <div class="stat"><div class="num" id="stat-streak">0</div><div class="label">day streak</div></div>
+      <div class="stat"><div class="num" id="stat-today">0</div><div class="label">today</div></div>
+      <div class="stat"><div class="num" id="hero-solved">0</div><div class="label">solved</div></div>
+      <div class="stat"><div class="num" id="stat-ac">—</div><div class="label">AC rate</div></div>
+    </section>
+    <span id="stat-tracked" hidden></span>
+
+    <section class="card next-card">
+      <div class="card-head">
+        <h2>Next up</h2>
+        <span id="next-sub" class="sub"></span>
+      </div>
+      <ul id="next-list" class="list"><li class="empty">Thinking…</li></ul>
+      <p id="next-foot" class="next-foot"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Due now</h2>
+        <span id="due-summary" class="sub"></span>
+      </div>
+      <ul id="due-list" class="list"><li class="empty">Loading…</li></ul>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Upcoming</h2>
+      </div>
+      <ul id="upcoming-list" class="list"><li class="empty">—</li></ul>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Recent activity</h2>
+      </div>
+      <ul id="recent-list" class="list"><li class="empty">No reviews yet.</li></ul>
+    </section>
+  </main>
+
+  <script src="newtab.js" type="module"></script>
+</body>
+</html>

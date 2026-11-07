@@ -2,7 +2,7 @@
 import {
   newCard, grade, isDue, QUALITY,
   DEFAULT_INTERVALS_MIN, DEFAULT_GROWTH,
-  formatDuration, parseDuration,
+  formatDuration, parseDuration, EASE,
 } from '../extension/lib/sm2.js';
 import assert from 'node:assert/strict';
 
@@ -105,6 +105,44 @@ test('parseDuration parses "30m", "1d", "1d12h", "90"', () => {
 });
 
 let passed = 0, failed = 0;
+test('never-failed card is unaffected by ease (backwards compatible)', () => {
+  let c = newCard('x');
+  c = grade(c, 'good').card;      // 3d
+  c = grade(c, 'good').card;      // 7.5d
+  assert.equal(c.ease, 1);
+  assert.equal(c.intervalMin, Math.round(DEFAULT_INTERVALS_MIN.good * DEFAULT_GROWTH.good));
+});
+
+test('a lapse shrinks the next Good below the full base', () => {
+  let c = newCard('x');
+  c = grade(c, 'good').card;
+  c = grade(c, 'again').card;
+  const { card } = grade(c, 'good');
+  assert.ok(card.intervalMin < DEFAULT_INTERVALS_MIN.good,
+    `expected < ${DEFAULT_INTERVALS_MIN.good}, got ${card.intervalMin}`);
+});
+
+test('repeated lapses keep shrinking, but ease is floored', () => {
+  let c = newCard('x');
+  for (let i = 0; i < 20; i++) c = grade(c, 'again').card;
+  assert.equal(c.ease, EASE.min);
+  assert.ok(c.intervalMin >= 1);
+});
+
+test('easy streak raises ease up to the cap', () => {
+  let c = newCard('x');
+  for (let i = 0; i < 30; i++) c = grade(c, 'easy').card;
+  assert.equal(c.ease, EASE.max);
+});
+
+test('easeEnabled:false restores the old flat schedule', () => {
+  let c = newCard('x');
+  c = grade(c, 'good', { easeEnabled: false }).card;
+  c = grade(c, 'again', { easeEnabled: false }).card;
+  const { card } = grade(c, 'good', { easeEnabled: false });
+  assert.equal(card.intervalMin, DEFAULT_INTERVALS_MIN.good);
+});
+
 for (const { name, fn } of tests) {
   try { fn(); console.log('  ok  ', name); passed++; }
   catch (e) { console.log('  FAIL', name, '\n      ', e.message); failed++; }

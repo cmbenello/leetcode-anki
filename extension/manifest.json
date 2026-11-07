@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LeetCode Anki",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Spaced repetition for LeetCode + NeetCode with auto-commits to a GitHub progress repo.",
   "permissions": ["storage", "webNavigation", "alarms", "notifications"],
   "host_permissions": [
@@ -9,6 +9,10 @@
     "https://*.leetcode.com/*",
     "https://neetcode.io/*",
     "https://*.neetcode.io/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://cmbenello.github.io/quant/*",
+    "file:///*",
     "https://api.github.com/*"
   ],
   "background": {
@@ -27,6 +31,9 @@
     "page": "options/options.html",
     "open_in_tab": true
   },
+  "chrome_url_overrides": {
+    "newtab": "newtab/newtab.html"
+  },
   "content_scripts": [
     {
       "matches": [
@@ -37,6 +44,16 @@
       ],
       "js": ["content/leetcode.js"],
       "css": ["content/widget.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://localhost/*",
+        "http://127.0.0.1/*",
+        "https://cmbenello.github.io/quant/*",
+        "file:///*"
+      ],
+      "js": ["content/quant.js"],
       "run_at": "document_idle"
     }
   ],

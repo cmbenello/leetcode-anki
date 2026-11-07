@@ -1,3 +1,52 @@
+/* "Next problem" prompt — top-left, after grading in a session. */
+#lcanki-next {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 2147483646;
+  background: rgba(30, 33, 40, 0.95);
+  border: 1px solid rgba(246, 231, 198, 0.25);
+  border-radius: 6px;
+  padding: 4px 4px 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  backdrop-filter: blur(6px);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+#lcanki-next.lcanki-hidden { display: none; }
+#lcanki-next .lcanki-next-btn {
+  background: transparent;
+  border: none;
+  color: #f6e7c6;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-family: inherit;
+  letter-spacing: 0.01em;
+}
+#lcanki-next .lcanki-next-btn:hover {
+  background: rgba(246, 231, 198, 0.08);
+}
+#lcanki-next .lcanki-next-close {
+  background: transparent;
+  border: none;
+  color: #6e7681;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 7px;
+  line-height: 1;
+  font-family: inherit;
+  border-radius: 4px;
+}
+#lcanki-next .lcanki-next-close:hover {
+  color: #d8dde3;
+  background: rgba(255,255,255,0.04);
+}
+
 /* Modal-style grade prompt. Hidden by default; auto-shows on submission. */
 
 #lcanki-root {
@@ -172,4 +221,15 @@
   background: rgba(215, 122, 114, 0.1);
   color: #e0b3ad;
   border-color: rgba(215, 122, 114, 0.25);
+}
+
+/* keyboard hint on grade buttons */
+#lcanki-root .lcanki-kbd {
+  display: block;
+  font: 600 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: 0.45;
+  margin-bottom: 3px;
+  border: none;
+  background: none;
+  padding: 0;
 }

@@ -1,9 +1,9 @@
 {
   "name": "leetcode-anki",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/sm2.test.js"
+    "test": "node tests/sm2.test.js && node tests/model.test.js && node tests/background.test.js"
   }
 }

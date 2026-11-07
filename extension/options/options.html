@@ -37,6 +37,11 @@
       </div>
 
       <div class="row">
+        <label class="inline"><input id="ease-enabled" type="checkbox" />
+          Adapt to lapses — problems you fail come back sooner; Easy streaks spread out</label>
+      </div>
+
+      <div class="row">
         <button id="reset-intervals">Reset to defaults</button>
       </div>
     </section>
@@ -116,6 +121,23 @@
     </section>
 
     <section>
+      <h2>Repair mis-detected submissions</h2>
+      <p class="hint">
+        Older versions guessed verdicts from the page and sometimes logged a
+        stale "Accepted" from your submission history, or gave a problem the
+        title of the one before it. This removes verdict bursts (several
+        results seconds apart — only the last was real) and fixes titles that
+        don't match their problem. Verdicts read from LeetCode's judge are
+        never touched. Runs automatically once on update; safe to re-run.
+      </p>
+      <div class="row">
+        <button id="clean-preview">Preview</button>
+        <button id="clean-run">Repair</button>
+        <span id="clean-status"></span>
+      </div>
+    </section>
+
+    <section>
       <h2>Repair card URLs</h2>
       <p class="hint">
         For older cards stored before site detection existed, this scans each
@@ -136,6 +158,16 @@
         <button id="export">Export JSON</button>
         <button id="import">Import JSON…</button>
         <input id="import-file" type="file" accept="application/json" hidden />
+      </div>
+      <p class="hint">
+        <b>Drill export</b> — every attempt in the shape of Drill's <code>attempts</code> table
+        (one JSON object per line, items as <code>lc:&lt;slug&gt;</code>, with the model's prediction,
+        topics, and attempt factors). Also committed to the tracker repo as
+        <code>drill/attempts.jsonl</code> on every sync.
+      </p>
+      <div class="row">
+        <button id="export-drill">Export attempts for Drill</button>
+        <span id="drill-status"></span>
       </div>
     </section>
 

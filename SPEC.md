@@ -66,10 +66,21 @@ The point is to (a) stop re-solving the same easy problems and (b) actually have
 - [ ] Surface "you commonly make X logic error" insights in popup + README
 
 ### Phase 6 — Polish (later)
-- [ ] Streak tracking + heatmap in popup
-- [ ] Keyboard shortcuts (1/2/3/4 grade)
+- [x] Streak tracking (new-tab page)
+- [x] Keyboard shortcuts (1/2/3/4 grade)
 - [x] Export/import JSON
 - [x] Customisable interval defaults (per-button base + growth multiplier)
+
+### Phase 7 — Goals + learner model (Drill integration)
+- [x] Goals: topics / fixed list (Blind 75 preset) / pasted list / everything, with deadline pace
+- [x] Radial goal-growth view on the new-tab page (angle = topic, radius = progress to goal)
+- [x] Verdicts from LeetCode's judge endpoint (not DOM text): Run excluded, deduped by submission id, pinned to the submitting slug
+- [x] Attempt factors: peeks, hints, fails before AC, time to AC; ungraded/abandoned sessions counted
+- [x] Learner model ported from Drill (`lib/model.js`): Elo per topic, E26 recall bonus, E24 variant timing
+- [x] "Next up" recommendations over the full LeetCode catalog, with prediction + evidence
+- [x] Calibration readout; `drill/attempts.jsonl` export in Drill's schema
+- [ ] Refit the cold-start difficulty prior from real attempts once there are enough
+- [ ] Drill-side importer for `drill/attempts.jsonl`
 
 ---
 

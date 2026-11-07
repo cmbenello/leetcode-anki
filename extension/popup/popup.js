@@ -1,4 +1,5 @@
 import { formatDuration } from '../lib/sm2.js';
+import { todayKey, dayKeyMs } from '../lib/dates.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -30,7 +31,7 @@ function fmtAgo(t) {
   if (d < 3600000)    return `${Math.round(d / 60000)}m ago`;
   if (d < 86400000)   return `${Math.round(d / 3600000)}h ago`;
   if (d < 86400000*30) return `${Math.round(d / 86400000)}d ago`;
-  return new Date(t).toISOString().slice(0, 10);
+  return dayKeyMs(t);
 }
 
 function makeRow(card, isDue) {
@@ -43,10 +44,14 @@ function makeRow(card, isDue) {
   const title = document.createElement('div');
   title.className = 'row-title';
   const a = document.createElement('a');
-  a.href = `https://leetcode.com/problems/${card.slug}/`;
-  a.target = '_blank';
+  a.href = '#';
   a.textContent = card.title || card.slug;
-  a.addEventListener('click', (e) => e.stopPropagation()); // don't toggle on link click
+  a.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await send('startSessionAt', { slug: card.slug });
+    window.close();
+  });
   title.appendChild(a);
 
   const when = document.createElement('span');
@@ -98,6 +103,7 @@ async function toggleExpand(li, card) {
 
   if (!card.reps) {
     panel.textContent = 'No reviews yet — solve it and grade to start tracking.';
+    appendDeleteAction(panel, card, li);
     return;
   }
 
@@ -161,6 +167,28 @@ async function toggleExpand(li, card) {
     hist.appendChild(row);
   }
   panel.appendChild(hist);
+
+  appendDeleteAction(panel, card, li);
+}
+
+function appendDeleteAction(panel, card, li) {
+  const actions = document.createElement('div');
+  actions.className = 'expand-actions';
+  const del = document.createElement('button');
+  del.className = 'delete-card';
+  del.textContent = 'Delete card';
+  del.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const resp = await send('deleteCard', { slug: card.slug });
+    if (resp?.ok) {
+      li.remove();
+      refresh();
+    } else {
+      console.warn('[lcanki] delete failed:', resp?.error);
+    }
+  });
+  actions.appendChild(del);
+  panel.appendChild(actions);
 }
 
 function renderList(ulSel, items, isDue) {
@@ -176,9 +204,7 @@ function renderList(ulSel, items, isDue) {
   for (const c of items) ul.appendChild(makeRow(c, isDue));
 }
 
-async function refreshSession() {
-  const r = await send('getSession');
-  const active = r?.session;
+function renderSession(active) {
   if (active) {
     $('#start-session').classList.add('hidden');
     $('#session-active').classList.remove('hidden');
@@ -189,12 +215,17 @@ async function refreshSession() {
   }
 }
 
+async function refreshSession() {
+  const r = await send('getSession');
+  renderSession(r?.session);
+}
+
 async function refresh() {
   const r = await send('getDueList');
   if (!r?.ok) return;
   $('#stat-due').textContent = r.due.length;
   $('#stat-total').textContent = r.total;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayKey();   // LOCAL day — matches how stats.byDay is written
   $('#stat-today').textContent = r.stats?.byDay?.[today] ?? 0;
   renderList('#due-list', r.due, true);
   renderList('#upcoming-list', r.upcoming, false);
@@ -203,7 +234,8 @@ async function refresh() {
   $('#start-session').textContent = r.due.length > 0
     ? `Start session (${r.due.length})`
     : 'Start session';
-  await refreshSession();
+  // getDueList now returns the session inline — saves a round-trip.
+  renderSession(r.session);
 }
 
 $('#start-session').addEventListener('click', async () => {

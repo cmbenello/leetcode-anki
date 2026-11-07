@@ -21,6 +21,7 @@ const F = {
   growHard: $('#grow-hard'),
   growGood: $('#grow-good'),
   growEasy: $('#grow-easy'),
+  easeEnabled: $('#ease-enabled'),
 
   reminderEnabled: $('#reminder-enabled'),
   reminderTime:    $('#reminder-time'),
@@ -46,6 +47,7 @@ async function load() {
   F.growHard.value = s.growth.hard;
   F.growGood.value = s.growth.good;
   F.growEasy.value = s.growth.easy;
+  F.easeEnabled.checked = s.easeEnabled !== false;
 
   F.reminderEnabled.checked = !!s.dailyReminderEnabled;
   F.reminderTime.value      = s.dailyReminderTime || '09:00';
@@ -67,6 +69,7 @@ function readForm() {
   return {
     intervals: { again: intAgain, hard: intHard, good: intGood, easy: intEasy },
     growth:    { again: 1.0,      hard: growHard, good: growGood, easy: growEasy },
+    easeEnabled: F.easeEnabled.checked,
     dailyReminderEnabled: F.reminderEnabled.checked,
     dailyReminderTime:    F.reminderTime.value || '09:00',
     githubRepo:  F.repo.value.trim(),
@@ -110,6 +113,21 @@ $('#verify').addEventListener('click', async () => {
   }
 });
 
+async function runClean(dryRun) {
+  const el = $('#clean-status');
+  setStatus(el, dryRun ? 'scanning…' : 'repairing…');
+  const r = await send('cleanSubmissions', { dryRun });
+  if (!r?.ok) { setStatus(el, r?.error || 'failed', 'err'); return; }
+  const parts = [
+    `${r.removed} bogus verdict${r.removed === 1 ? '' : 's'}`,
+    `${r.phantomAccepts} phantom AC${r.phantomAccepts === 1 ? '' : 's'}`,
+    `${r.titlesFixed} wrong title${r.titlesFixed === 1 ? '' : 's'}`,
+  ];
+  setStatus(el, `${dryRun ? 'would fix' : 'fixed'}: ${parts.join(' · ')}`, 'ok');
+}
+$('#clean-preview').addEventListener('click', () => runClean(true));
+$('#clean-run').addEventListener('click', () => runClean(false));
+
 $('#repair-urls').addEventListener('click', async () => {
   if (!confirm('Scan all cards without stored URLs and probe LeetCode to detect their site?')) return;
   const status = $('#repair-status');
@@ -139,6 +157,19 @@ $('#export').addEventListener('click', async () => {
   a.download = `leetcode-anki-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
+});
+
+$('#export-drill').addEventListener('click', async () => {
+  const r = await send('exportDrill');
+  if (!r?.ok) { setStatus($('#drill-status'), r?.error || 'failed', 'err'); return; }
+  const n = r.jsonl ? r.jsonl.trim().split('\n').filter(Boolean).length : 0;
+  const url = URL.createObjectURL(new Blob([r.jsonl], { type: 'application/x-ndjson' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `leetcode-attempts-${new Date().toISOString().slice(0, 10)}.jsonl`;
+  a.click();
+  URL.revokeObjectURL(url);
+  setStatus($('#drill-status'), `${n} attempts exported`, 'ok');
 });
 
 $('#import').addEventListener('click', () => $('#import-file').click());

@@ -3,12 +3,17 @@
 
 import { newCard, grade as applyGrade, BUTTONS, formatDuration } from './lib/sm2.js';
 import {
-  getCard, upsertCard, getSettings, bumpStats, getStats, getCards,
+  getCard, upsertCard, getSettings, bumpStats, getStats, setStats, getCards, setCards,
   pushSyncQueue, getSyncQueue, setSyncQueue,
   getMeta, getAllMeta, upsertMeta,
+  getSchemaVersion, setSchemaVersion,
+  getGoals, setGoals, getActiveGoalId, setActiveGoalId, getCatalog, setCatalog,
 } from './lib/storage.js';
-import { commitFiles } from './lib/github.js';
-import { fetchQuestionMeta } from './lib/leetcode-api.js';
+import { replay, predict, recommend, evidenceFor, mastery, calibration, mulberry32 } from './lib/model.js';
+import { makeGoal, goalMatches, goalProgress, PRESETS, INTERVIEW_TAGS, parseSlugList } from './lib/goals.js';
+import { commitWithRetry } from './lib/github.js';
+import { dayKeyMs, todayKey, lastNDayKeys } from './lib/dates.js';
+import { fetchQuestionMeta, fetchCatalog } from './lib/leetcode-api.js';
 
 const LANG_EXT = {
   python: 'py', python3: 'py',
@@ -66,10 +71,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case 'grade': {
           const result = await handleGrade(msg);
           sendResponse(result);
-          // If a session is active, navigate the same tab to the next problem.
-          // Sync runs in background so this is snappy.
-          const tabId = sender.tab?.id;
-          if (tabId && result?.ok) advanceSession(tabId).catch(() => {});
+          // No auto-advance — the content script will surface a "Next problem"
+          // button after grading so the user controls when to move on.
           break;
         }
         case 'ensureMeta': {
@@ -89,6 +92,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse(await getCardStats(msg.slug));
           break;
         }
+        case 'getSolvedCount': {
+          const cards = await getCards();
+          let solved = 0;
+          for (const c of Object.values(cards)) {
+            if (isSolved(c)) solved += 1;
+          }
+          sendResponse({ ok: true, solved, total: Object.keys(cards).length });
+          break;
+        }
         case 'updateDailyReminder': {
           await scheduleDailyReminder();
           sendResponse({ ok: true });
@@ -100,7 +112,44 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case 'startSession': {
-          sendResponse(await startSession());
+          sendResponse(await startSession(sender.tab?.id));
+          break;
+        }
+        case 'startSessionAt': {
+          sendResponse(await startSessionAt(msg.slug, sender.tab?.id));
+          break;
+        }
+        case 'getGoals': {
+          sendResponse(await getGoalsWithProgress());
+          break;
+        }
+        case 'saveGoal': {
+          sendResponse(await saveGoal(msg.goal || {}));
+          break;
+        }
+        case 'deleteGoal': {
+          sendResponse(await deleteGoal(msg.id));
+          break;
+        }
+        case 'setActiveGoal': {
+          await setActiveGoalId(msg.id ?? null);
+          sendResponse({ ok: true });
+          break;
+        }
+        case 'getGoalView': {
+          sendResponse(await getGoalView(msg.id));
+          break;
+        }
+        case 'getRecommendations': {
+          sendResponse(await getRecommendations(msg.id, msg.k));
+          break;
+        }
+        case 'exportDrill': {
+          sendResponse({ ok: true, jsonl: await drillAttemptsJsonl() });
+          break;
+        }
+        case 'cleanSubmissions': {
+          sendResponse(await cleanSubmissions({ dryRun: !!msg.dryRun }));
           break;
         }
         case 'stopSession': {
@@ -111,8 +160,45 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true, session: await getSession() });
           break;
         }
+        case 'skipInSession': {
+          const tabId = sender.tab?.id;
+          if (tabId) advanceSession(tabId).catch(() => {});
+          sendResponse({ ok: true });
+          break;
+        }
         case 'repairCardUrls': {
           sendResponse(await repairCardUrls());
+          break;
+        }
+        case 'deleteCard': {
+          sendResponse(await deleteCardBySlug(msg.slug));
+          break;
+        }
+        case 'recordSubmission': {
+          sendResponse(await recordSubmissionEvent(msg));
+          break;
+        }
+        case 'quant-grade': {
+          if (!quantSenderAllowed(sender)) { sendResponse({ ok: false, error: 'origin not allowed' }); break; }
+          sendResponse(await syncQuantCard(msg.card));
+          break;
+        }
+        case 'quant-grade-batch': {
+          if (!quantSenderAllowed(sender)) { sendResponse({ ok: false, error: 'origin not allowed' }); break; }
+          sendResponse(await syncQuantBatch(msg.cards || []));
+          break;
+        }
+        case 'quant-list': {
+          if (!quantSenderAllowed(sender)) { sendResponse({ ok: false, error: 'origin not allowed' }); break; }
+          sendResponse({ ok: true, ids: Object.keys(await getQuantIndex()) });
+          break;
+        }
+        case 'quant-cards': {
+          // Read-only list of synced quant cards for the extension's own dashboard
+          // pages (newtab/popup). No origin gate: external pages can't reach this
+          // (not externally_connectable; the content relay only forwards grade/list).
+          const qix = await getQuantIndex();
+          sendResponse({ ok: true, cards: Object.keys(qix).map(id => Object.assign({ id: id, slug: id }, qix[id])) });
           break;
         }
         default:
@@ -126,6 +212,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
+// ---------- titles ----------
+// LeetCode slugs are derived from titles ("Pow(x, n)" -> "powx-n"), so a
+// title whose letters contain the slug's letters is verifiably right.
+const alnum = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const slugTitle = (slug) => String(slug || '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+function titleMatchesSlug(title, slug) { return !!title && alnum(title).includes(alnum(slug)); }
+
+// Priority: LeetCode's own title (GraphQL meta) > a title that provably
+// matches the slug > what we already had > what the page said > the slug.
+// The old rule ("set once, never change") meant a title captured mid-
+// navigation from the PREVIOUS problem stuck to the card forever.
+function bestTitle(slug, existing, incoming, meta, site = null) {
+  if (meta?.title && (meta.slug === slug || titleMatchesSlug(meta.title, slug))) return meta.title;
+  if (titleMatchesSlug(existing, slug)) return existing;
+  if (titleMatchesSlug(incoming, slug)) return incoming;
+  // On LeetCode a title that doesn't contain the slug is almost certainly a
+  // stale one from the previous page; the slug is a safer stand-in until
+  // metadata lands. NeetCode slugs legitimately differ from titles.
+  if (site === 'leetcode') return slugTitle(slug);
+  return existing || incoming || slugTitle(slug);
+}
+
 // ---------- grade handler ----------
 function siteFromUrl(url) {
   return (url || '').includes('neetcode.io') ? 'neetcode' : 'leetcode';
@@ -136,16 +244,51 @@ function problemUrl(site, slug) {
     ? `https://neetcode.io/problems/${slug}`
     : `https://leetcode.com/problems/${slug}/`;
 }
+// Strip /solution, /solutions, /description, /submissions, /editorial, /discuss
+// etc. off the end of a problem URL, plus any query/hash. We always want to
+// re-land on the bare editor view, never the solution viewer.
+function normalizeProblemUrl(url) {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    const m = u.pathname.match(/^(\/(?:problems?|practice)\/[^/]+)/);
+    if (!m) return url;
+    const trailing = u.hostname.includes('leetcode.com') ? '/' : '';
+    return `${u.protocol}//${u.host}${m[1]}${trailing}`;
+  } catch {
+    return url;
+  }
+}
 
-async function handleGrade({ slug, title, quality, durationMs, readingMs, codingMs, code, language, url, submission }) {
+async function handleGrade({ slug, title, quality, durationMs, readingMs, codingMs, code, language, url, submission, factors }) {
   const settings = await getSettings();
+  // Drill logs the model's prediction for every attempt so it can later show
+  // whether its numbers were honest. That only works if the prediction is the
+  // one you'd have seen when you STARTED: built from earlier attempts only and
+  // evaluated at that moment. Building it from everything stored at grade time
+  // leaked the outcome in — this attempt's own Accepted verdict is already
+  // stored by then, so it counted as an earlier attempt, moving ability and
+  // triggering the recall bonus (Drill's importer caught a 50% problem logged
+  // as 78%).
+  let pPred = null;
+  try {
+    const startedAt = factors?.startedAt ?? null;
+    const prevGradeT = (await getCard(slug))?.history?.at(-1)?.t ?? 0;
+    const asOf = startedAt ?? Date.now();
+    // Tabs running an older content script don't send startedAt: then drop
+    // everything on THIS problem since its last grade — conservative, no leak.
+    const keep = startedAt
+      ? (a) => a.ts < startedAt
+      : (a) => !(a.slug === slug && a.ts > prevGradeT);
+    const { st, known } = await learnerState({ keep });
+    const item = known[slug] || { slug, tags: tagSlugs(await getMeta(slug)) };
+    pPred = Math.round(predict(st, item, asOf).p * 1000) / 1000;
+  } catch (e) { /* prediction is best-effort */ }
   const site = siteFromUrl(url);
   const existing = (await getCard(slug)) ?? newCard(slug, title, site);
-  if (title && !existing.title) existing.title = title;
-  // Always overwrite — heals old cards whose site was defaulted incorrectly,
-  // and updates lastUrl so session-mode can navigate back to the exact page.
+  existing.title = bestTitle(slug, existing.title, title, await getMeta(slug), site);
   existing.site = site;
-  if (url) existing.lastUrl = url;
+  if (url) existing.lastUrl = normalizeProblemUrl(url);
 
   const { card, prevIntervalMin, nextIntervalMin } = applyGrade(existing, quality, settings);
   card.history.push({
@@ -157,33 +300,106 @@ async function handleGrade({ slug, title, quality, durationMs, readingMs, coding
     codingMs:  codingMs  ?? null,
     lang: language ?? null,
     submission: submission ?? null,
+    factors: factors ?? null,       // { peeked, hints, failsBeforeAc, timeToAcMs, firstTryAc, startedAt }
+    pPred,
+    pPredV: 2,                      // v1 predictions leaked the outcome; only v2 are trusted
   });
+  // Code to commit: what the editor holds right now, else what we stashed at
+  // the Accepted verdict. Then clear the stash — this grade owns it.
+  const commitCode = code ?? card.pendingCode ?? null;
+  const commitLang = language ?? card.pendingLang ?? null;
+  const hadPending = card.pendingCode != null;
+  delete card.pendingCode; delete card.pendingLang;
+  delete card.pendingAt;   delete card.pendingStatus;
+
   await upsertCard(card);
   await bumpStats({ isLapse: quality < 3 });
+  await ensureMeta(slug).catch(() => {});
 
-  // best-effort metadata fetch
-  ensureMeta(slug).catch(() => {});
-
-  // Fire GitHub sync in the background — do NOT block the grade response.
-  // Caller (content script + session advance) needs to react fast.
-  if (settings.syncEnabled && settings.githubToken && settings.githubRepo) {
-    (async () => {
-      try {
-        const { notesNewlyCreated } = await syncToGitHub({
-          card, prevIntervalMin, quality, durationMs, code, language, url, settings,
-        });
-        if (notesNewlyCreated) {
-          const fresh = await getCard(card.slug);
-          if (fresh) { fresh.notesCreated = true; await upsertCard(fresh); }
-        }
-      } catch (e) {
-        console.warn('[lcanki] sync failed:', e.message);
-        await pushSyncQueue({ slug: card.slug, t: Date.now(), reason: e.message });
-      }
-    })();
+  // ONE commit per grade, carrying the grade you just gave. Previously sync
+  // fired only on the Accepted verdict — which lands BEFORE you grade — so the
+  // repo's meta.json/history/dashboards were always one grade behind, and a
+  // grade with no fresh AC never reached GitHub at all.
+  let syncError = null;
+  const settings2 = await getSettings();
+  if (settings2.syncEnabled && settings2.githubToken && settings2.githubRepo) {
+    const label = buttonLabelFor(quality);
+    const message = `${card.site}/${slug}: ${label} (${formatDuration(prevIntervalMin)} → ${formatDuration(nextIntervalMin)})`;
+    const r = await syncToGitHub({
+      card, code: commitCode, language: commitLang, url, settings: settings2, message,
+    });
+    if (!r.ok) {
+      syncError = r.error;
+      await pushSyncQueue({
+        slug, t: Date.now(), reason: r.error,
+        code: commitCode, language: commitLang, url, message,
+      });
+    }
+  } else if (hadPending) {
+    // Sync off: nothing to do with the stash; it was cleared above.
   }
 
-  return { ok: true, prevIntervalMin, nextIntervalMin };
+  return { ok: true, prevIntervalMin, nextIntervalMin, syncError };
+}
+
+async function recordSubmissionEvent({ slug, title, url, status, submissionId, source, detail, code, language }) {
+  if (!slug || !status) return { ok: false, error: 'missing slug or status' };
+  const prior = await getCard(slug);
+  // url is null when the verdict landed after you navigated to another
+  // problem — keep the card's known site instead of guessing from nothing.
+  const site = url ? siteFromUrl(url) : (prior?.site || 'leetcode');
+  const existing = prior ?? newCard(slug, title, site);
+  existing.title = bestTitle(slug, existing.title, title, await getMeta(slug), site);
+  existing.site = site;
+  if (url) existing.lastUrl = normalizeProblemUrl(url);
+  existing.submissions = existing.submissions || [];
+
+  // Exact dedupe. The content script dedupes too, but it can be re-injected
+  // (extension reload, SPA re-init) and lose its memory; storage can't.
+  const id = submissionId ? String(submissionId) : null;
+  if (id && existing.submissions.some(x => x.id === id)) {
+    return { ok: true, duplicate: true };
+  }
+
+  const entry = { t: Date.now(), status, source: source || 'dom' };
+  if (id) entry.id = id;
+  if (detail) {
+    if (detail.runtime)        entry.runtime = detail.runtime;
+    if (detail.memory)         entry.memory = detail.memory;
+    if (detail.totalCorrect != null)   entry.correct = detail.totalCorrect;
+    if (detail.totalTestcases != null) entry.total = detail.totalTestcases;
+  }
+  existing.submissions.push(entry);
+
+  // On Accepted, stash the code. The commit happens when you GRADE (one
+  // commit per grade, with the grade in it). If you never grade, the hourly
+  // sweep commits the stash so an Accepted solution is never lost.
+  if (/accepted/i.test(status) && code != null) {
+    existing.pendingCode = code;
+    existing.pendingLang = language ?? null;
+    existing.pendingAt = Date.now();
+    existing.pendingStatus = status;
+  }
+  await upsertCard(existing);
+
+  ensureMeta(slug).catch(() => {});
+  return { ok: true };
+}
+
+async function deleteCardBySlug(slug) {
+  if (!slug) return { ok: false, error: 'no slug' };
+  const cards = await getCards();
+  if (!cards[slug]) return { ok: false, error: 'card not found' };
+  delete cards[slug];
+  await setCards(cards);
+  // If a session is active, drop the deleted slug from any remaining queue.
+  const session = await getSession();
+  if (session) {
+    const before = session.queue.length;
+    session.queue = session.queue.filter((q, i) => i < session.index || q.slug !== slug);
+    if (session.queue.length !== before) await setSession(session);
+  }
+  return { ok: true };
 }
 
 // ---------- one-shot repair: backfill site + lastUrl on old cards ----------
@@ -234,7 +450,53 @@ async function setSession(s) {
   else await chrome.storage.local.set({ [SESSION_KEY]: s });
 }
 
-async function startSession() {
+async function startSessionAt(slug, senderTabId) {
+  const cards = await getCards();
+  const clicked = cards[slug];
+  if (!clicked) return { ok: false, error: 'card not found' };
+
+  const now = Date.now();
+  const due = Object.values(cards)
+    .filter(c => (c.due ?? 0) <= now && c.slug !== slug)
+    .sort((a, b) => (a.due ?? 0) - (b.due ?? 0));
+
+  // Clicked card goes first, then the rest of due cards in due order.
+  const ordered = [clicked, ...due];
+  const queue = dedupeBySlug(ordered).map(c => ({
+    slug: c.slug,
+    site: c.site || 'leetcode',
+    title: c.title,
+    url: normalizeProblemUrl(c.lastUrl || problemUrl(c.site || 'leetcode', c.slug)),
+  }));
+
+  const session = { queue, index: 0, completed: 0, startedAt: Date.now() };
+  await setSession(session);
+  openProblem(queue[0].url, senderTabId);
+  return { ok: true, session };
+}
+
+// A card counts as "solved" if any of: it has a recorded Accepted submission,
+// it has a graded history entry whose submission was Accepted, or the user
+// has graded it with non-fail at least once (reps > 0).
+function isSolved(c) {
+  if ((c.reps ?? 0) > 0) return true;
+  if ((c.submissions ?? []).some(s => /accepted/i.test(s?.status || ''))) return true;
+  if ((c.history ?? []).some(h => /accepted/i.test(h?.submission?.status || ''))) return true;
+  return false;
+}
+
+function dedupeBySlug(cards) {
+  const seen = new Set();
+  const out = [];
+  for (const c of cards) {
+    if (seen.has(c.slug)) continue;
+    seen.add(c.slug);
+    out.push(c);
+  }
+  return out;
+}
+
+async function startSession(senderTabId) {
   const cards = await getCards();
   const now = Date.now();
   const due = Object.values(cards)
@@ -243,14 +505,14 @@ async function startSession() {
 
   if (!due.length) return { ok: false, error: 'no due problems' };
 
-  const queue = due.map(c => ({
+  const queue = dedupeBySlug(due).map(c => ({
     slug: c.slug,
     site: c.site || 'leetcode',
     title: c.title,
     // Prefer the exact URL the user last graded on. Slugs differ between
     // LeetCode and NeetCode for the same problem; only the captured URL is
     // a reliable "go back to where you were" identifier.
-    url: c.lastUrl || problemUrl(c.site || 'leetcode', c.slug),
+    url: normalizeProblemUrl(c.lastUrl || problemUrl(c.site || 'leetcode', c.slug)),
   }));
   const session = { queue, index: 0, completed: 0, startedAt: Date.now() };
   await setSession(session);
@@ -258,14 +520,19 @@ async function startSession() {
   // Navigate in the background. We do NOT await the tab API here because
   // the popup awaits this message response and chrome.tabs.update can
   // block while the popup is up, leaving the popup hung.
-  openProblem(queue[0].url);
+  openProblem(queue[0].url, senderTabId);
 
   return { ok: true, session };
 }
 
-function openProblem(url) {
+// senderTabId is set when the request came from a page in a tab (the newtab
+// dashboard, a problem page). Navigating THAT tab is what the user expects;
+// the old code inspected the active tab's URL, saw chrome-extension://…/newtab,
+// decided it wasn't a problem page, and opened a second tab.
+function openProblem(url, senderTabId) {
   (async () => {
     try {
+      if (senderTabId) { await chrome.tabs.update(senderTabId, { url }); return; }
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab && /\/problems?\//.test(tab.url || '')) {
         await chrome.tabs.update(tab.id, { url });
@@ -303,7 +570,7 @@ async function advanceSession(senderTabId) {
 
   await setSession(session);
   const next = session.queue[session.index];
-  const url = next.url || problemUrl(next.site, next.slug);
+  const url = normalizeProblemUrl(next.url || problemUrl(next.site, next.slug));
   if (senderTabId) {
     chrome.tabs.update(senderTabId, { url }).catch(() => {});
   }
@@ -325,6 +592,11 @@ async function ensureMeta(slug, lcSlug) {
     const meta = await fetchQuestionMeta(lookup);
     if (meta) {
       await upsertMeta(slug, meta);
+      const card = await getCard(slug);
+      if (card) {
+        const t = bestTitle(slug, card.title, null, meta);
+        if (t !== card.title) { card.title = t; await upsertCard(card); }
+      }
       return meta;
     }
   } catch (e) {
@@ -334,9 +606,10 @@ async function ensureMeta(slug, lcSlug) {
 }
 
 // ---------- GitHub sync ----------
-async function syncToGitHub({ card, prevIntervalMin, quality, durationMs, code, language, url, settings }) {
+// Called from recordSubmissionEvent ONLY (on Accepted). Commits the current
+// editor code plus regenerated dashboards. Not invoked on grade events.
+async function syncToGitHub({ card, code, language, url, settings, message }) {
   const ext = extFor(language, settings.defaultLang);
-  const button = buttonLabelFor(quality);
   const slug = card.slug;
   const site = card.site || siteFromUrl(url);
   const dir = `${site}/${slug}`;
@@ -348,23 +621,7 @@ async function syncToGitHub({ card, prevIntervalMin, quality, durationMs, code, 
     files.push({ path: `${dir}/solution.${ext}`, content: code });
   }
 
-  files.push({
-    path: `${dir}/meta.json`,
-    content: JSON.stringify({
-      slug,
-      title: card.title,
-      site,
-      url,
-      difficulty: meta?.difficulty ?? null,
-      tags: meta?.tags ?? [],
-      intervalMin: card.intervalMin,
-      reps: card.reps,
-      lapses: card.lapses,
-      due: card.due,
-      dueIso: new Date(card.due).toISOString(),
-      history: card.history,
-    }, null, 2) + '\n',
-  });
+  files.push({ path: `${dir}/meta.json`, content: renderMetaJson(card, meta, url) });
 
   files.push({ path: `${dir}/README.md`, content: renderProblemReadme(card, meta) });
 
@@ -384,18 +641,468 @@ async function syncToGitHub({ card, prevIntervalMin, quality, durationMs, code, 
   files.push({ path: 'log.md',     content: await renderLog() });
   files.push({ path: 'stats.json', content: JSON.stringify(await getStats(), null, 2) + '\n' });
   files.push({ path: 'README.md',  content: await renderReadme() });
+  files.push({ path: 'drill/attempts.jsonl', content: await drillAttemptsJsonl() });
 
-  const dur = durationMs ? ` · ${Math.round(durationMs / 1000)}s` : '';
-  const message = `${site}/${slug}: ${button} (${formatDuration(prevIntervalMin)} → ${formatDuration(card.intervalMin)})${dur}`;
-
-  await commitFiles({
+  const r = await commitWithRetry({
     token: settings.githubToken,
     repo: settings.githubRepo,
-    message,
+    message: message || `${site}/${slug}: sync`,
     files,
   });
+  if (r.ok && notesNewlyCreated) {
+    const fresh = await getCard(slug);
+    if (fresh) { fresh.notesCreated = true; await upsertCard(fresh); }
+  }
+  return r;
+}
 
-  return { notesNewlyCreated };
+// Build the per-problem file set for one card (used by the queue flush so a
+// retry re-sends the REAL solution + meta, not just dashboards).
+async function problemFiles(card, code, language, url, settings) {
+  const site = card.site || siteFromUrl(url);
+  const dir = `${site}/${card.slug}`;
+  const meta = await getMeta(card.slug);
+  const files = [];
+  if (code != null) files.push({ path: `${dir}/solution.${extFor(language, settings.defaultLang)}`, content: code });
+  files.push({ path: `${dir}/meta.json`, content: renderMetaJson(card, meta, url) });
+  files.push({ path: `${dir}/README.md`, content: renderProblemReadme(card, meta) });
+  return files;
+}
+
+function renderMetaJson(card, meta, url) {
+  return JSON.stringify({
+    slug: card.slug,
+    title: card.title,
+    site: card.site,
+    url: url || card.lastUrl || null,
+    difficulty: meta?.difficulty ?? null,
+    tags: meta?.tags ?? [],
+    intervalMin: card.intervalMin,
+    ease: card.ease ?? 1,
+    reps: card.reps,
+    lapses: card.lapses,
+    due: card.due,
+    dueIso: new Date(card.due).toISOString(),
+    history: card.history,
+    submissions: card.submissions ?? [],
+  }, null, 2) + '\n';
+}
+
+// ---------- learner model (ported from Drill — see lib/model.js) ----------
+
+const tagSlugs = (meta) => (meta?.tags || []).map(t => t.slug);
+
+// A graded history entry is a SOLVE for the model only if it really was one:
+// not graded Again, not after peeking at the editorial/solutions, and not
+// attached to a failing verdict.
+function attemptCorrect(h) {
+  if (h.q === 0) return 0;
+  if (h.factors?.peeked) return 0;
+  if (h.submission?.status && !/accepted/i.test(h.submission.status)) return 0;
+  return 1;
+}
+
+const SESSION_GAP_MS = 3 * 3600e3;
+/**
+ * Every attempt the model learns from:
+ *   - graded attempts (history), scored by attemptCorrect;
+ *   - submission sessions you never graded: no AC => you tried and left (a
+ *     miss); AC => you solved it and closed the modal (a solve). Without
+ *     these, walking away from a problem looked like never having tried it.
+ */
+function cardsToAttempts(cards, metaAll) {
+  const out = [];
+  for (const c of Object.values(cards)) {
+    const tags = tagSlugs(metaAll[c.slug]);
+    const hist = c.history ?? [];
+    for (const h of hist) {
+      // Pre-fix (v1) predictions had already seen the outcome — drop them
+      // rather than let them pass for calibration evidence.
+      out.push({ slug: c.slug, ts: h.t, correct: attemptCorrect(h), tags, pPred: h.pPredV === 2 ? (h.pPred ?? null) : null,
+                 seconds: h.durationMs ? h.durationMs / 1000 : null, verdict: h.submission?.status ?? null,
+                 factors: h.factors ?? null, kind: 'graded' });
+    }
+    const subs = (c.submissions ?? []).slice().sort((a, b) => a.t - b.t);
+    let group = [];
+    const flush = () => {
+      if (!group.length) return;
+      const start = group[0].t, end = group[group.length - 1].t;
+      const graded = hist.some(h => h.t >= start - 5 * 60e3 && h.t <= end + 6 * 3600e3);
+      if (!graded) {
+        const ac = group.some(g => /accepted/i.test(g.status));
+        out.push({ slug: c.slug, ts: end, correct: ac ? 1 : 0, tags, pPred: null, seconds: null,
+                   verdict: group[group.length - 1].status, factors: null, kind: ac ? 'ungraded-ac' : 'abandoned' });
+      }
+      group = [];
+    };
+    for (const sub of subs) {
+      if (group.length && sub.t - group[group.length - 1].t > SESSION_GAP_MS) flush();
+      group.push(sub);
+    }
+    flush();
+  }
+  return out.sort((a, b) => a.ts - b.ts);
+}
+
+let catalogMemo = { at: -1, rows: [], bySlug: {} };
+async function catalogIndex() {
+  const cat = await getCatalog();
+  if (!cat) return catalogMemo;
+  if (cat.fetchedAt !== catalogMemo.at) {
+    const D = { E: 'Easy', M: 'Medium', H: 'Hard' };
+    const rows = cat.rows.map(r => ({ slug: r.s, title: r.t, difficulty: D[r.d], acRate: r.a, paid: !!r.p, tags: r.g, id: r.n }));
+    catalogMemo = { at: cat.fetchedAt, rows, bySlug: Object.fromEntries(rows.map(r => [r.slug, r])) };
+  }
+  return catalogMemo;
+}
+
+const CATALOG_MAX_AGE = 7 * 24 * 3600e3;
+let catalogFetching = null;
+function ensureCatalog({ force = false } = {}) {
+  if (catalogFetching) return catalogFetching;
+  catalogFetching = (async () => {
+    try {
+      const cat = await getCatalog();
+      if (!force && cat && Date.now() - cat.fetchedAt < CATALOG_MAX_AGE) return;
+      const rows = await fetchCatalog();
+      if (rows.length > 1000) await setCatalog(rows);   // never replace a good catalog with a partial one
+    } catch (e) {
+      console.warn('[lcanki] catalog refresh failed:', e?.message || e);
+    } finally {
+      catalogFetching = null;
+    }
+  })();
+  return catalogFetching;
+}
+
+/** Everything the model needs, built from local data. */
+async function learnerState({ keep = null } = {}) {
+  const [cards, metaAll, cat] = [await getCards(), await getAllMeta(), await catalogIndex()];
+  const known = {};
+  for (const [slug, m] of Object.entries(metaAll)) {
+    known[slug] = {
+      slug, title: m.title || cards[slug]?.title || slug, difficulty: m.difficulty,
+      acRate: m.acRate ?? cat.bySlug[slug]?.acRate ?? null, tags: tagSlugs(m), similar: m.similar || [],
+    };
+  }
+  const items = { ...cat.bySlug, ...known };
+  const all = cardsToAttempts(cards, metaAll);
+  const attempts = keep ? all.filter(keep) : all;
+  return { st: replay(attempts, items), attempts, known, cards, metaAll, cat };
+}
+
+function firstSolvedAt(c) {
+  const ts = [
+    ...(c.history ?? []).filter(h => attemptCorrect(h)).map(h => h.t),
+    ...(c.submissions ?? []).filter(x => /accepted/i.test(x.status)).map(x => x.t),
+  ];
+  if (ts.length) return Math.min(...ts);
+  return (c.reps ?? 0) > 0 ? (c.history?.[0]?.t ?? null) : null;
+}
+
+function solvedProblems(cards, metaAll) {
+  const out = [];
+  for (const c of Object.values(cards)) {
+    if (!isSolved(c)) continue;
+    const m = metaAll[c.slug];
+    out.push({
+      slug: c.slug, title: c.title || c.slug, site: c.site || 'leetcode',
+      tags: tagSlugs(m), tagNames: (m?.tags || []).map(t => t.name),
+      difficulty: m?.difficulty ?? null,
+      t: firstSolvedAt(c) ?? c.history?.[0]?.t ?? Date.now(),
+      due: c.due ?? null, reviews: (c.history ?? []).length, lapses: c.lapses ?? 0,
+      url: normalizeProblemUrl(c.lastUrl || problemUrl(c.site || 'leetcode', c.slug)),
+    });
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
+// ---------- goals ----------
+async function getGoalsWithProgress() {
+  const [goals, activeId, cards, metaAll] = [await getGoals(), await getActiveGoalId(), await getCards(), await getAllMeta()];
+  const solved = solvedProblems(cards, metaAll);
+  return {
+    ok: true,
+    activeId: goals.some(g => g.id === activeId) ? activeId : (goals[0]?.id ?? null),
+    goals: goals.map(g => ({ ...g, progress: goalProgress(g, solved) })),
+    totalSolved: solved.length,
+    presets: { blind75: PRESETS.blind75.slugs.length, interviewTags: INTERVIEW_TAGS },
+  };
+}
+
+async function saveGoal(fields) {
+  let f = { ...fields };
+  if (f.preset === 'blind75') f = { ...PRESETS.blind75, ...f, type: 'list', slugs: PRESETS.blind75.slugs };
+  if (f.type === 'list' && typeof f.slugsText === 'string') f.slugs = parseSlugList(f.slugsText);
+  if (f.type === 'list' && !f.slugs?.length) return { ok: false, error: 'a list goal needs at least one problem' };
+  if (f.type === 'tags' && !f.tags?.length) return { ok: false, error: 'pick at least one topic' };
+  const goals = await getGoals();
+  const prev = goals.find(g => g.id === f.id);
+  const g = makeGoal({ ...prev, ...f });
+  const next = prev ? goals.map(x => (x.id === g.id ? g : x)) : [...goals, g];
+  await setGoals(next);
+  if (!prev) await setActiveGoalId(g.id);
+  return { ok: true, goal: g };
+}
+
+async function deleteGoal(id) {
+  const goals = (await getGoals()).filter(g => g.id !== id);
+  await setGoals(goals);
+  if ((await getActiveGoalId()) === id) await setActiveGoalId(goals[0]?.id ?? null);
+  return { ok: true };
+}
+
+async function goalById(id) {
+  const goals = await getGoals();
+  return goals.find(g => g.id === id) || null;
+}
+
+/** Problems for the radial growth view, oldest first. */
+async function getGoalView(id) {
+  const [cards, metaAll] = [await getCards(), await getAllMeta()];
+  const goal = id ? await goalById(id) : null;
+  const all = solvedProblems(cards, metaAll);
+  const problems = goal ? all.filter(p => goalMatches(goal, p.slug, p.tags)) : all;
+  const progress = goal ? goalProgress(goal, all) : { done: all.length, target: Math.max(all.length, 1), pct: 1 };
+  return { ok: true, goal, progress, problems, now: Date.now() };
+}
+
+async function getRecommendations(id, k = 5) {
+  ensureCatalog();                                   // refresh in the background if stale
+  const { st, attempts, known, cat } = await learnerState();
+  const goal = id ? await goalById(id) : null;
+  const catalog = cat.rows.length ? cat.rows : Object.values(known);
+  const modelGoal = goal && goal.type !== 'all'
+    ? { tags: goal.type === 'tags' ? goal.tags : [], matches: (it) => goalMatches(goal, it.slug, it.tags || []) }
+    : null;
+  // Seeded per day + per attempt, so the list is stable until you do something.
+  const seed = [...`${todayKey()}:${attempts.length}:${id || ''}`].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7);
+  const recs = recommend({ st, catalog, known, rng: mulberry32(seed), goal: modelGoal, k: Math.min(10, k || 5) });
+  return {
+    ok: true,
+    recs: recs.map(r => ({
+      slug: r.item.slug, title: r.item.title || r.item.slug, difficulty: r.item.difficulty ?? null,
+      tags: r.item.tags || [], p: r.p, recall: r.recall, reason: r.reason, variant: r.variant,
+      retry: r.retry, onGoal: r.onGoal, url: `https://leetcode.com/problems/${r.item.slug}/`,
+      evidence: evidenceFor(r.item, attempts, known, 3),
+    })),
+    // Weakest among the goal's own topics when it has them — "you're weak at
+    // combinatorics" is noise when you're preparing for a Google loop.
+    weakest: mastery(st).filter(m => m.confident && (goal?.type !== 'tags' || goal.tags.includes(m.concept))).slice(0, 3),
+    calibration: calibration(attempts),
+    attempts: attempts.length,
+    catalog: { size: cat.rows.length, fetchedAt: cat.at > 0 ? cat.at : null, loading: !!catalogFetching },
+  };
+}
+
+// ---------- Drill bridge ----------
+// The attempt log in Drill's `attempts` table shape (src/embed/engine.py
+// SCHEMA), one JSON object per line, items namespaced "lc:<slug>". Committed
+// to the tracker repo as drill/attempts.jsonl and downloadable from Options,
+// so Drill's analysis (calibration, experiment_report) can run on real
+// LeetCode practice.
+async function drillAttemptsJsonl() {
+  const [metaAll, cat] = [await getAllMeta(), await catalogIndex()];
+  const attempts = cardsToAttempts(await getCards(), metaAll);
+  return attempts.map(a => JSON.stringify({
+    user: 'leetcode', item: `lc:${a.slug}`, ts: a.ts / 1000, correct: a.correct,
+    p_pred: a.pPred, n_pass: null, n_tests: null, verdict: a.verdict, seconds: a.seconds,
+    code: '', phase: 'practice', kind: a.kind, concepts: a.tags, factors: a.factors,
+    // what the extension's difficulty prior was built from, so Drill's prior
+    // check doesn't have to re-fetch today's (drifted) acceptance rates
+    difficulty: metaAll[a.slug]?.difficulty ?? cat.bySlug[a.slug]?.difficulty ?? null,
+    acRate: metaAll[a.slug]?.acRate ?? cat.bySlug[a.slug]?.acRate ?? null,
+  })).join('\n') + (attempts.length ? '\n' : '');
+}
+
+// ---------- quant-drills bridge ----------
+// The quant-drills static site has no GitHub token; it posts a full card and we
+// own the commit. We write ONLY under quant/ (+ quant/README.md dashboard) and
+// NEVER the global README.md/log.md/stats.json, so leetcode + quant coexist in
+// one repo without clobbering each other.
+let quantQueue = Promise.resolve();   // serialize commits: one branch-ref update at a time
+
+// Only accept quant grades from the trusted quant-drills origins. The manifest
+// match is port-agnostic, so this is the real gate. Keep in sync with the
+// allow-list in content/quant.js. card.id is additionally validated below so a
+// crafted id can never escape the quant/ prefix.
+const QUANT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+function quantSenderAllowed(sender) {
+  try {
+    const u = new URL((sender && sender.url) || '');
+    if (u.protocol === 'file:') return true;   // user opening the static site off disk
+    if (u.origin === 'http://localhost:8765' || u.origin === 'http://127.0.0.1:8765') return true;
+    if (u.origin === 'https://cmbenello.github.io' && u.pathname.startsWith('/quant')) return true;
+  } catch (e) {}
+  return false;
+}
+
+function quantFmtDate(ms) { return dayKeyMs(ms); }
+
+function quantMetaJson(card) {
+  const sr = card.sr || {};
+  const due = (sr.dueTs != null) ? sr.dueTs : Date.now();
+  const lapses = (card.history || []).filter(h => h.result === 'incorrect').length;
+  return JSON.stringify({
+    slug: card.id, title: card.title, site: 'quant', url: card.url,
+    difficulty: card.difficulty || null, difficultyNum: card.difficultyNum ?? null,
+    tags: Array.isArray(card.tags) ? card.tags : [],
+    intervalMin: Math.round((sr.intervalDays || 0) * 1440),
+    reps: sr.reps || 0, lapses, ease: sr.ease ?? null,
+    due, dueIso: new Date(due).toISOString(), history: card.history || [],
+  }, null, 2) + '\n';
+}
+function quantStatementMd(card) {
+  const L = [`# ${card.title}`, '', card.statement || ''];
+  if (Array.isArray(card.parts)) card.parts.forEach((pt, i) => { L.push('', pt.prompt || `Part ${i + 1}`); });
+  L.push('', '---', `_Source: ${card.source || 'quant-drills'}_`);
+  return L.join('\n') + '\n';
+}
+function quantSolutionMd(card) {
+  const L = [`# Solution — ${card.title}`, ''];
+  if (Array.isArray(card.parts)) {
+    card.parts.forEach((pt, i) => {
+      L.push(`## Part ${String.fromCharCode(97 + i)}`);
+      if (pt.answer != null) L.push(`**Answer:** \`${pt.answer}\``, '');
+      L.push(pt.solution || '_(no solution)_', '');
+    });
+  } else {
+    if (card.answer != null) L.push(`**Answer:** \`${card.answer}\``, '');
+    L.push(card.solution || '_(no solution)_', '');
+  }
+  if (card.hints && card.hints.length) { L.push('## Hints'); card.hints.forEach((h, i) => L.push(`${i + 1}. ${h}`)); }
+  return L.join('\n') + '\n';
+}
+function quantProblemReadme(card) {
+  const sr = card.sr || {};
+  const due = (sr.dueTs != null) ? sr.dueTs : Date.now();
+  const lapses = (card.history || []).filter(h => h.result === 'incorrect').length;
+  const L = [`# ${card.title}`, ''];
+  L.push(`**Difficulty:** ${card.difficulty || '?'}${card.difficultyNum ? ` (${card.difficultyNum}/5)` : ''}  `);
+  if (card.topic) L.push(`**Topic:** ${card.topic}  `);
+  if (card.firms && card.firms.length) L.push(`**Firms:** ${card.firms.join(', ')}  `);
+  L.push('**Site:** quant-drills', '');
+  L.push('## Status');
+  L.push(`- **Reps:** ${sr.reps || 0}`);
+  L.push(`- **Lapses:** ${lapses}`);
+  L.push(`- **Ease:** ${sr.ease ?? '—'}`);
+  L.push(`- **Interval:** ${sr.intervalDays ? sr.intervalDays + ' d' : '—'}`);
+  L.push(`- **Next due:** ${quantFmtDate(due)}`, '');
+  L.push('See [statement.md](./statement.md), [solution.md](./solution.md). [notes.md](./notes.md) is yours — never overwritten.', '');
+  L.push('## Review history', '');
+  const hist = card.history || [];
+  if (!hist.length) L.push('_No reviews yet._');
+  else {
+    L.push('| When | Result | Confidence |', '| --- | --- | --- |');
+    hist.slice().reverse().forEach(h => {
+      const when = new Date(h.t).toISOString().replace('T', ' ').slice(0, 16);
+      L.push(`| ${when} | ${h.result} | ${h.conf != null ? Math.round(h.conf * 100) + '%' : '—'} |`);
+    });
+  }
+  L.push('', '---', '_Auto-generated by the quant-drills bridge on every grade._');
+  return L.join('\n') + '\n';
+}
+function quantSeedNotes(card) {
+  return [`# Notes — ${card.title}`, '', 'This file is yours; the bridge never overwrites it after this seed.', '',
+    '## My approach', '', '_…_', '', '## Where I slipped', '', '_…_', ''].join('\n');
+}
+function quantDashboard(index) {
+  const now = Date.now();
+  const rows = Object.keys(index).map(id => ({ id, ...index[id] }));
+  const due = rows.filter(r => (r.due || 0) <= now).sort((a, b) => (a.due || 0) - (b.due || 0));
+  const diff = { Easy: 0, Medium: 0, Hard: 0, Unknown: 0 };
+  rows.forEach(r => { if (diff[r.difficulty] != null) diff[r.difficulty]++; else diff.Unknown++; });
+  const reviews = rows.reduce((s, r) => s + (r.reviews || 0), 0);
+  const L = ['# Quant Drills — spaced repetition', ''];
+  L.push(`_Auto-generated. ${rows.length} cards · ${reviews} reviews · ${due.length} due now._`, '');
+  L.push(`**By difficulty:** Easy ${diff.Easy} · Medium ${diff.Medium} · Hard ${diff.Hard}${diff.Unknown ? ` · Unknown ${diff.Unknown}` : ''}`, '');
+  L.push(`## Due now (${due.length})`, '');
+  if (!due.length) L.push('_Nothing due. 🎉_');
+  else {
+    L.push('| Problem | Difficulty | Reps | Due |', '| --- | --- | --- | --- |');
+    due.slice(0, 50).forEach(r => L.push(`| [${r.title || r.id}](./${r.id}/) | ${r.difficulty || '—'} | ${r.reps || 0} | ${quantFmtDate(r.due || now)} |`));
+  }
+  L.push('', `## All cards (${rows.length})`, '');
+  L.push('| Problem | Difficulty | Reps | Lapses | Next due |', '| --- | --- | --- | --- | --- |');
+  rows.sort((a, b) => (a.due || 0) - (b.due || 0)).forEach(r =>
+    L.push(`| [${r.title || r.id}](./${r.id}/) | ${r.difficulty || '—'} | ${r.reps || 0} | ${r.lapses || 0} | ${quantFmtDate(r.due || now)} |`));
+  L.push('');
+  return L.join('\n') + '\n';
+}
+
+async function getQuantIndex() { const o = await chrome.storage.local.get('quantCards'); return o.quantCards || {}; }
+
+// Build the per-card files for ONE card and update its index entry in place.
+// Returns null for a bad/crafted id (defense-in-depth: never let '../' escape
+// the quant/ prefix and clobber a global file).
+function quantCardFiles(card, index) {
+  if (!card || !QUANT_ID_RE.test(card.id || '')) return null;
+  if (!card.sr) card.sr = {};
+  const dueNum = Number(card.sr.dueTs);
+  card.sr.dueTs = Number.isFinite(dueNum) ? dueNum : Date.now();
+  const dir = `quant/${card.id}`;
+  const prev = index[card.id] || {};
+  const sr = card.sr;
+  const lapses = (card.history || []).filter(h => h.result === 'incorrect').length;
+  const files = [
+    { path: `${dir}/meta.json`, content: quantMetaJson(card) },
+    { path: `${dir}/statement.md`, content: quantStatementMd(card) },
+    { path: `${dir}/solution.md`, content: quantSolutionMd(card) },
+    { path: `${dir}/README.md`, content: quantProblemReadme(card) },
+  ];
+  let notesCreated = prev.notesCreated;
+  if (!notesCreated) { files.push({ path: `${dir}/notes.md`, content: quantSeedNotes(card) }); notesCreated = true; }
+  index[card.id] = {
+    title: card.title, difficulty: card.difficulty || '—', due: sr.dueTs,
+    url: card.url || null, tags: Array.isArray(card.tags) ? card.tags.slice(0, 4) : [],
+    reps: sr.reps || 0, lapses, reviews: (card.history || []).length,
+    reviewTs: (card.history || []).map(h => h.t).filter(Boolean).slice(-60),  // per-day review timestamps for the heatmap
+    lastTs: Date.now(), notesCreated,
+  };
+  return files;
+}
+
+// Public entries from the message router. Both serialize through quantQueue so
+// commits never race the branch ref. A single grade is just a batch of one;
+// the backfill sends ~20 at a time so 100 solved problems become ~5 commits.
+function syncQuantCard(card) {
+  if (!card || !card.id) return Promise.resolve({ ok: false, error: 'no card' });
+  return syncQuantBatch([card]);
+}
+function syncQuantBatch(cards) {
+  if (!Array.isArray(cards) || !cards.length) return Promise.resolve({ ok: false, error: 'no cards' });
+  const run = () => doSyncQuantBatch(cards);
+  quantQueue = quantQueue.then(run, run);   // continue even if a prior commit rejected
+  return quantQueue;
+}
+async function doSyncQuantBatch(cards) {
+  const settings = await getSettings();
+  if (!settings.syncEnabled || !settings.githubToken || !settings.githubRepo) {
+    return { ok: false, error: 'tracker sync is off — enable it (+ token + repo) in the extension options' };
+  }
+  const index = await getQuantIndex();
+  let files = [];
+  const syncedIds = [];
+  for (const card of cards) {
+    const f = quantCardFiles(card, index);   // also mutates index[card.id]
+    if (f) { files = files.concat(f); syncedIds.push(card.id); }
+  }
+  if (!syncedIds.length) return { ok: false, error: 'no valid cards' };
+
+  // Persist the index BEFORE generating dashboards so both quant/README.md and
+  // the repo-root README.md include these cards. On a total commit failure the
+  // local index is at worst this batch ahead of the repo; the next sync reconciles.
+  await chrome.storage.local.set({ quantCards: index });
+  files.push({ path: 'quant/README.md', content: quantDashboard(index) });
+  files.push({ path: 'README.md', content: await renderReadme() });   // repo homepage carries a Quant section
+
+  const message = syncedIds.length === 1
+    ? `quant/${syncedIds[0]}: sync`
+    : `quant: sync ${syncedIds.length} problems`;
+  const r = await commitWithRetry({ token: settings.githubToken, repo: settings.githubRepo, message, files });
+  if (r.ok) return { ok: true, syncedIds };   // index already persisted above
+  console.error('[lcanki quant] batch commit failed', r.cause);
+  return { ok: false, error: r.error };
 }
 
 // ---------- markdown rendering ----------
@@ -471,7 +1178,7 @@ function renderProblemReadme(card, meta) {
   lines.push(`- **Lapses:** ${card.lapses}`);
   lines.push(`- **Current interval:** ${formatDuration(card.intervalMin)}`);
   if (card.due) {
-    lines.push(`- **Next due:** ${new Date(card.due).toISOString().slice(0, 10)}`);
+    lines.push(`- **Next due:** ${dayKeyMs(card.due)}`);
   }
 
   const history = card.history ?? [];
@@ -483,10 +1190,20 @@ function renderProblemReadme(card, meta) {
     if (history.length > 1) {
       lines.push(`- **Avg per attempt:** ${fmtSec(totalDur / history.length)}`);
     }
-    const subs = history.filter(h => h.submission?.status);
+    const subs = card.submissions ?? [];
     if (subs.length) {
-      const acs = subs.filter(h => /accepted/i.test(h.submission.status)).length;
-      lines.push(`- **AC rate:** ${acs}/${subs.length}`);
+      const acs = subs.filter(s => /accepted/i.test(s.status)).length;
+      lines.push(`- **AC rate:** ${acs}/${subs.length} attempts`);
+      const counts = {};
+      for (const s of subs) {
+        const cat = categorizeSubmission(s.status);
+        if (cat) counts[cat] = (counts[cat] || 0) + 1;
+      }
+      const breakdown = Object.entries(counts)
+        .filter(([k]) => k !== 'ac')
+        .map(([k, v]) => `${k.toUpperCase()}: ${v}`)
+        .join(' · ');
+      if (breakdown) lines.push(`- **Failures:** ${breakdown}`);
     }
   }
   lines.push('');
@@ -558,15 +1275,11 @@ async function renderSiteReadme(site) {
   const byDay = {};
   for (const c of all) {
     for (const h of c.history ?? []) {
-      const d = new Date(h.t).toISOString().slice(0, 10);
+      const d = dayKeyMs(h.t);
       byDay[d] = (byDay[d] || 0) + 1;
     }
   }
-  const days = [];
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(now - i * 86400000).toISOString().slice(0, 10);
-    days.push({ d, n: byDay[d] ?? 0 });
-  }
+  const days = lastNDayKeys(30).map(d => ({ d, n: byDay[d] ?? 0 }));
   const totalRecent = days.reduce((s, x) => s + x.n, 0);
 
   const lines = [];
@@ -609,7 +1322,7 @@ async function renderSiteReadme(site) {
     for (const c of dueNow.slice(0, 100)) {
       const d = meta[c.slug]?.difficulty ?? '—';
       const last = c.history?.length
-        ? new Date(c.history.at(-1).t).toISOString().slice(0, 10)
+        ? dayKeyMs(c.history.at(-1).t)
         : '—';
       lines.push(`| [${c.title}](./${c.slug}/) | ${d} | ${c.reps} | ${c.lapses} | ${last} |`);
     }
@@ -626,7 +1339,7 @@ async function renderSiteReadme(site) {
     lines.push('| --- | --- | --- | --- | --- |');
     for (const c of sorted) {
       const d = meta[c.slug]?.difficulty ?? '—';
-      const due = c.due ? new Date(c.due).toISOString().slice(0, 10) : '—';
+      const due = c.due ? dayKeyMs(c.due) : '—';
       lines.push(`| [${c.title}](./${c.slug}/) | ${d} | ${c.reps} | ${c.lapses} | ${due} |`);
     }
   }
@@ -669,27 +1382,25 @@ async function renderReadme() {
   const cards = await getCards();
   const stats = await getStats();
   const now = Date.now();
+  const quantCards = Object.values(await getQuantIndex());
+  const quantDue = quantCards.filter(c => (c.due ?? 0) <= now).length;
+  const quantReviews = quantCards.reduce((s, c) => s + (c.reviews || 0), 0);
 
   const all = Object.values(cards);
   const bySite = { leetcode: [], neetcode: [] };
   for (const c of all) (bySite[c.site || 'leetcode'] ??= []).push(c);
 
   const dueNow = all.filter(c => (c.due ?? 0) <= now);
-  const today = new Date().toISOString().slice(0, 10);
-
-  const days = [];
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(now - i * 86400000).toISOString().slice(0, 10);
-    days.push({ d, n: stats.byDay?.[d] ?? 0 });
-  }
+  const today = todayKey();
+  const days = lastNDayKeys(30).map(d => ({ d, n: stats.byDay?.[d] ?? 0 }));
 
   const lines = [
     '# DSA Spaced Repetition Tracker',
     '',
     'Auto-generated by the [LeetCode Anki](https://github.com/) extension.',
     '',
-    `- **Total tracked:** ${all.length} (LeetCode ${bySite.leetcode.length} · NeetCode ${bySite.neetcode.length})`,
-    `- **Total reviews:** ${stats.totalReviews ?? 0}`,
+    `- **Total tracked:** ${all.length} (LeetCode ${bySite.leetcode.length} · NeetCode ${bySite.neetcode.length}) · Quant ${quantCards.length}`,
+    `- **Total reviews:** ${stats.totalReviews ?? 0}${quantReviews ? ` (+${quantReviews} quant)` : ''}`,
     `- **Lapses:** ${stats.lapses ?? 0}`,
     `- **Reviewed today:** ${stats.byDay?.[today] ?? 0}`,
     `- **Due now:** ${dueNow.length}`,
@@ -698,6 +1409,7 @@ async function renderReadme() {
     '',
     `- [LeetCode](./leetcode/) — ${bySite.leetcode.length} tracked`,
     `- [NeetCode](./neetcode/) — ${bySite.neetcode.length} tracked`,
+    `- [Quant Drills](./quant/) — ${quantCards.length} tracked · ${quantDue} due`,
     '',
     '## Last 30 days (all sites)',
     '',
@@ -714,20 +1426,29 @@ async function renderReadme() {
 async function getDueList() {
   const cards = await getCards();
   const meta = await getAllMeta();
+  const session = await getSession();
+  // Cards already passed in the active session (graded or skipped) should
+  // not clutter the displayed due list — that's what makes the list look
+  // unchanged after pressing × on a session problem.
+  const passed = new Set(
+    session ? session.queue.slice(0, session.index).map(q => q.slug) : []
+  );
   const now = Date.now();
   const due = [], upcoming = [];
   for (const c of Object.values(cards)) {
+    if (passed.has(c.slug)) continue;
     const enriched = { ...c, meta: meta[c.slug] ?? null };
     if ((c.due ?? 0) <= now) due.push(enriched); else upcoming.push(enriched);
   }
   due.sort((a, b) => (a.due ?? 0) - (b.due ?? 0));
-  upcoming.sort((a, b) => a.due - b.due);
+  upcoming.sort((a, b) => (a.due ?? 0) - (b.due ?? 0));
   return {
     ok: true,
     due,
     upcoming: upcoming.slice(0, 30),
     stats: await getStats(),
     total: Object.keys(cards).length,
+    session,
   };
 }
 
@@ -738,23 +1459,28 @@ async function getCardStats(slug) {
   const history = card.history ?? [];
 
   const counts = { again: 0, hard: 0, good: 0, easy: 0 };
-  const subCounts = { ac: 0, wa: 0, tle: 0, mle: 0, re: 0, ce: 0, ole: 0, other: 0 };
   let totalDur = 0, totalRead = 0, totalCode = 0, durSamples = 0;
-  let submissions = 0, accepts = 0;
   for (const h of history) {
     const id = h.button ?? buttonIdFor(h.q);
     if (counts[id] != null) counts[id] += 1;
     if (h.durationMs) { totalDur += h.durationMs; durSamples += 1; }
     if (h.readingMs) totalRead += h.readingMs;
     if (h.codingMs)  totalCode += h.codingMs;
-    const cat = categorizeSubmission(h.submission?.status);
-    if (cat) {
-      subCounts[cat] += 1;
-      submissions += 1;
-      if (cat === 'ac') accepts += 1;
-    }
   }
   const avgDurMs = durSamples ? totalDur / durSamples : 0;
+
+  // Submission counts come from the per-card submissions array (every attempt),
+  // not just the per-grade snapshots — so WA/TLE/RE attempts that never led
+  // to a grade still show up.
+  const subCounts = { ac: 0, wa: 0, tle: 0, mle: 0, re: 0, ce: 0, ole: 0, other: 0 };
+  let submissions = 0, accepts = 0;
+  for (const s of (card.submissions ?? [])) {
+    const cat = categorizeSubmission(s.status);
+    if (!cat) continue;
+    subCounts[cat] += 1;
+    submissions += 1;
+    if (cat === 'ac') accepts += 1;
+  }
 
   return {
     ok: true,
@@ -781,28 +1507,70 @@ async function getCardStats(slug) {
 }
 
 // ---------- retry queue ----------
+// Queue items carry the payload needed to rebuild the commit
+// ({ slug, code, language, url, message }). The old flush pushed only the
+// dashboards and then cleared the queue — silently discarding every failed
+// solution commit while reporting "flushed N".
 async function flushSyncQueue() {
   const q = await getSyncQueue();
+  if (!q.length) return { ok: true, flushed: 0 };
+
   const settings = await getSettings();
   if (!settings.syncEnabled || !settings.githubToken || !settings.githubRepo) {
     return { ok: false, error: 'sync disabled or unconfigured' };
   }
-  try {
-    await commitFiles({
-      token: settings.githubToken,
-      repo: settings.githubRepo,
-      message: q.length ? `sync: flush ${q.length} queued events` : 'sync: refresh dashboard',
-      files: [
-        { path: 'log.md',     content: await renderLog() },
-        { path: 'stats.json', content: JSON.stringify(await getStats(), null, 2) + '\n' },
-        { path: 'README.md',  content: await renderReadme() },
-      ],
-    });
-    await setSyncQueue([]);
-    return { ok: true, flushed: q.length };
-  } catch (e) {
-    return { ok: false, error: e.message };
+
+  // Coalesce: newest payload per slug wins (it has the freshest code/state).
+  const latest = new Map();
+  for (const item of q) latest.set(item.slug, item);
+
+  const files = [];
+  const cards = await getCards();
+  for (const item of latest.values()) {
+    const card = cards[item.slug];
+    if (!card) continue;                       // card deleted since it queued
+    files.push(...await problemFiles(card, item.code ?? null, item.language ?? null, item.url, settings));
   }
+  const sites = new Set([...latest.values()].map(i => cards[i.slug]?.site).filter(Boolean));
+  for (const site of sites) files.push({ path: `${site}/README.md`, content: await renderSiteReadme(site) });
+  files.push({ path: 'log.md',     content: await renderLog() });
+  files.push({ path: 'stats.json', content: JSON.stringify(await getStats(), null, 2) + '\n' });
+  files.push({ path: 'README.md',  content: await renderReadme() });
+
+  const slugs = [...latest.keys()];
+  const message = slugs.length === 1
+    ? (latest.get(slugs[0]).message || `${cards[slugs[0]]?.site || 'leetcode'}/${slugs[0]}: retry`)
+    : `sync: retry ${slugs.length} queued problems`;
+
+  const r = await commitWithRetry({ token: settings.githubToken, repo: settings.githubRepo, message, files });
+  if (!r.ok) return { ok: false, error: r.error };
+  await setSyncQueue([]);
+  return { ok: true, flushed: slugs.length };
+}
+
+// Accepted but never graded (you closed the modal): commit the stashed code
+// once it's been sitting for a while, so a solved problem always lands in the
+// repo. Runs on the hourly alarm.
+const PENDING_GRACE_MS = 30 * 60_000;
+async function sweepUngradedAccepts() {
+  const settings = await getSettings();
+  if (!settings.syncEnabled || !settings.githubToken || !settings.githubRepo) return;
+  const cards = await getCards();
+  const now = Date.now();
+  let queued = 0;
+  for (const c of Object.values(cards)) {
+    if (c.pendingCode == null || now - (c.pendingAt ?? now) < PENDING_GRACE_MS) continue;
+    await pushSyncQueue({
+      slug: c.slug, t: now, reason: 'ungraded accept',
+      code: c.pendingCode, language: c.pendingLang ?? null, url: c.lastUrl,
+      message: `${c.site || 'leetcode'}/${c.slug}: AC (ungraded)`,
+    });
+    delete c.pendingCode; delete c.pendingLang; delete c.pendingAt; delete c.pendingStatus;
+    queued += 1;
+  }
+  if (!queued) return;
+  await setCards(cards);
+  await flushSyncQueue();
 }
 
 // ---------- daily reminder ----------
@@ -838,20 +1606,19 @@ async function fireDailyReminder() {
 
   if (!due.length) return;
 
-  const items = due.slice(0, 5).map(c => {
+  // 'basic', not 'list': macOS/Windows native notifications drop list items,
+  // which left the body EMPTY whenever 5 or fewer problems were due.
+  const names = due.slice(0, 3).map(c => {
     const d = meta[c.slug]?.difficulty;
-    return {
-      title: c.title || c.slug,
-      message: d ? `${d} · reps ${c.reps}${c.lapses ? ` · ${c.lapses}L` : ''}` : `reps ${c.reps}`,
-    };
+    return `${c.title || c.slug}${d ? ` (${d})` : ''}`;
   });
+  const more = due.length > 3 ? ` +${due.length - 3} more` : '';
 
   chrome.notifications.create('lcanki-daily', {
-    type: 'list',
+    type: 'basic',
     iconUrl: chrome.runtime.getURL('icons/icon128.png'),
     title: `${due.length} problem${due.length === 1 ? '' : 's'} due today`,
-    message: due.length > 5 ? `…and ${due.length - 5} more` : '',
-    items,
+    message: names.join(' · ') + more,
     priority: 1,
   });
 }
@@ -863,17 +1630,139 @@ chrome.notifications?.onClicked.addListener((id) => {
   }
 });
 
+const SWEEP_ALARM = 'lcanki-sweep';
+const CATALOG_ALARM = 'lcanki-catalog';
+
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === REMINDER_ALARM) fireDailyReminder().catch(() => {});
-  if (a.name === RETRY_ALARM)    flushSyncQueue().catch(() => {});
+  if (a.name === SWEEP_ALARM) sweepUngradedAccepts().catch(() => {});
+  if (a.name === CATALOG_ALARM) ensureCatalog();
+  // RETRY_ALARM was deliberately removed — sync now happens only on AC and
+  // we never auto-flush. If a commit fails, retry manually via the popup.
 });
 
-// startup wiring
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create(RETRY_ALARM, { periodInMinutes: 60 });
+// One-shot migration: re-normalize every stored lastUrl. Older versions of
+// the extension saved URLs with /history, /solution, /description, etc.
+// suffixes that caused session navigation to land on the wrong view.
+async function normalizeAllStoredUrls() {
+  const cards = await getCards();
+  let changed = 0;
+  for (const card of Object.values(cards)) {
+    if (!card.lastUrl) continue;
+    const fixed = normalizeProblemUrl(card.lastUrl);
+    if (fixed !== card.lastUrl) {
+      card.lastUrl = fixed;
+      changed += 1;
+    }
+  }
+  if (changed) {
+    await setCards(cards);
+    console.log(`[lcanki] normalized ${changed} card URL(s)`);
+  }
+}
+
+// ---------- one-shot migrations ----------
+// v1: rebuild stats from card history with LOCAL day keys. byDay used to be
+// written with UTC keys, so every past evening review is filed under the wrong
+// day. History timestamps are exact epoch-ms, so we can recompute precisely
+// instead of guessing an offset. totalReviews/lapses are recomputed too so the
+// counters can't drift from the cards they summarise.
+async function rebuildStatsFromHistory() {
+  const cards = await getCards();
+  const prev = await getStats();
+  const byDay = {};
+  let totalReviews = 0, lapses = 0, lastReviewAt = 0;
+  for (const c of Object.values(cards)) {
+    for (const h of c.history ?? []) {
+      if (!h?.t) continue;
+      const k = dayKeyMs(h.t);
+      byDay[k] = (byDay[k] || 0) + 1;
+      totalReviews += 1;
+      if ((h.q ?? 4) < 3) lapses += 1;
+      if (h.t > lastReviewAt) lastReviewAt = h.t;
+    }
+  }
+  await setStats({ ...prev, totalReviews, lapses, lastReviewAt, byDay });
+  return { totalReviews, days: Object.keys(byDay).length };
+}
+
+// Clean submissions recorded by the old DOM scraper. Two patterns are
+// provably bogus:
+//   1. a burst — several verdicts within BURST_MS of each other. A human can't
+//      submit twice in a few seconds; that's one submission plus stale history
+//      re-renders. Keep only the LAST in the burst (the live verdict).
+//   2. exact duplicates — same status within DUP_MS.
+// Entries with a network submission id are authoritative and never touched.
+const BURST_MS = 10_000;
+async function cleanSubmissions({ dryRun = false } = {}) {
+  const cards = await getCards();
+  let removed = 0, flippedAc = 0, touchedCards = 0;
+  for (const c of Object.values(cards)) {
+    const subs = (c.submissions ?? []).slice().sort((a, b) => a.t - b.t);
+    if (subs.length < 2) continue;
+    const keep = [];
+    for (let i = 0; i < subs.length; i++) {
+      const cur = subs[i];
+      if (cur.id) { keep.push(cur); continue; }          // authoritative
+      const next = subs[i + 1];
+      if (next && !next.id && next.t - cur.t < BURST_MS) {
+        // cur is superseded by a later verdict in the same burst
+        removed += 1;
+        if (/accepted/i.test(cur.status) && !/accepted/i.test(next.status)) flippedAc += 1;
+        continue;
+      }
+      keep.push(cur);
+    }
+    if (keep.length !== subs.length) {
+      touchedCards += 1;
+      if (!dryRun) c.submissions = keep;
+    }
+  }
+  // Titles copied from the previous problem: the same title on two different
+  // slugs means one of them is a stale copy. Fix any card whose title doesn't
+  // match its slug, using LeetCode metadata when we have it.
+  const meta = await getAllMeta();
+  const byTitle = {};
+  for (const c of Object.values(cards)) (byTitle[c.title] ??= []).push(c);
+  let titlesFixed = 0;
+  for (const c of Object.values(cards)) {
+    const shared = (byTitle[c.title]?.length ?? 0) > 1;
+    const m = meta[c.slug];
+    let fixed = c.title;
+    if (m?.title && (m.slug === c.slug || titleMatchesSlug(m.title, c.slug))) fixed = m.title;
+    else if (shared && !titleMatchesSlug(c.title, c.slug)) fixed = slugTitle(c.slug);
+    if (fixed !== c.title) { titlesFixed += 1; if (!dryRun) c.title = fixed; }
+  }
+
+  if (!dryRun && (touchedCards || titlesFixed)) await setCards(cards);
+  return { ok: true, removed, phantomAccepts: flippedAc, cards: touchedCards, titlesFixed, dryRun };
+}
+
+const SCHEMA_VERSION = 2;
+async function runMigrations() {
+  const v = await getSchemaVersion();
+  if (v < 1) {
+    const r = await rebuildStatsFromHistory();
+    console.log('[lcanki] migration v1: rebuilt stats with local day keys', r);
+  }
+  if (v < 2) {
+    const r = await cleanSubmissions();
+    console.log('[lcanki] migration v2: cleaned mis-detected submissions + titles', r);
+  }
+  if (v < SCHEMA_VERSION) await setSchemaVersion(SCHEMA_VERSION);
+}
+
+function bootstrap() {
+  // Clear any RETRY_ALARM lingering from a previous version — Chrome alarms
+  // are persistent across extension reloads and would otherwise keep firing
+  // dashboard-refresh commits.
+  chrome.alarms.clear(RETRY_ALARM).catch(() => {});
   scheduleDailyReminder().catch(() => {});
-});
-chrome.runtime.onStartup?.addListener(() => {
-  chrome.alarms.create(RETRY_ALARM, { periodInMinutes: 60 });
-  scheduleDailyReminder().catch(() => {});
-});
+  normalizeAllStoredUrls().catch(() => {});
+  runMigrations().catch((e) => console.warn('[lcanki] migration failed', e));
+  chrome.alarms.create(SWEEP_ALARM, { periodInMinutes: 60 });
+  chrome.alarms.create(CATALOG_ALARM, { periodInMinutes: 24 * 60 });
+  ensureCatalog();
+}
+chrome.runtime.onInstalled.addListener(bootstrap);
+chrome.runtime.onStartup?.addListener(bootstrap);

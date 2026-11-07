@@ -42,8 +42,13 @@ leetcode-anki/
 │   │   ├── options.html         # GitHub PAT, repo, sync toggle
 │   │   ├── options.js
 │   │   └── options.css
+│   ├── newtab/                  # dashboard: goals, growth view, next up, due lists
+│   │   ├── growth.js            # radial goal-growth canvas (pure layout + draw)
 │   ├── lib/
-│   │   ├── sm2.js               # pure function, no DOM
+│   │   ├── sm2.js               # scheduler (+ ease that adapts to lapses), pure
+│   │   ├── model.js             # learner model + recommender, ported from Drill, pure
+│   │   ├── goals.js             # goal matching/progress + Blind 75, pure
+│   │   ├── dates.js             # LOCAL day keys — single source of truth
 │   │   ├── storage.js           # chrome.storage wrapper
 │   │   ├── github.js            # Git Data API: blob → tree → commit → ref
 │   │   └── time-tracker.js      # active time (visibility + idle)
@@ -115,7 +120,11 @@ leetcode-anki/
 
 - Read `SPEC.md` and `CLAUDE_CODE_PROMPT.md` at session start.
 - Stay in Phase 1+2 until both checklists are done.
-- Test the SM-2 algorithm with `node tests/sm2.test.js` before wiring it to UI.
+- Run `npm test` (scheduler, learner model, goals) before wiring changes to UI.
+- Day keys are LOCAL time and come only from `lib/dates.js`; never `toISOString().slice(0, 10)`.
+- Submission verdicts come from the judge endpoint via `content/inject.js`; the DOM observer is a fallback only.
+- `lib/model.js` mirrors Drill (`~/Coding/embed/src/embed/engine.py`); keep constants in sync and cite the experiment.
+- A logged `pPred` must be the prediction as of the attempt's START (`factors.startedAt`), from earlier attempts only — the attempt's own verdict is stored before the grade and would otherwise leak in. Only `pPredV: 2` entries are trusted; `tests/background.test.js` guards this.
 - Manual test loop: load unpacked → visit `leetcode.com/problems/two-sum` → grade → check `chrome.storage.local` in DevTools → check GitHub repo for commit.
 - Don't add a build step. If you want TypeScript, write `.js` with JSDoc types.
 - Mark `SPEC.md` checklist items with `[x]` when done.

@@ -2,6 +2,7 @@
 // Service workers in MV3 die when idle, so all state must round-trip through here.
 
 import { DEFAULT_INTERVALS_MIN, DEFAULT_GROWTH } from './sm2.js';
+import { dayKeyMs } from './dates.js';
 
 const KEYS = {
   CARDS: 'cards',          // { [slug]: card }
@@ -9,6 +10,10 @@ const KEYS = {
   SETTINGS: 'settings',
   SYNC_QUEUE: 'syncQueue',
   STATS: 'stats',
+  SCHEMA: 'schemaVersion',
+  GOALS: 'goals',
+  ACTIVE_GOAL: 'activeGoal',
+  CATALOG: 'catalog',          // { fetchedAt, rows: [...] } — see lib/leetcode-api.js
 };
 
 const DEFAULT_SETTINGS = {
@@ -21,6 +26,9 @@ const DEFAULT_SETTINGS = {
   // Scheduler
   intervals: { ...DEFAULT_INTERVALS_MIN },
   growth:    { ...DEFAULT_GROWTH },
+  // Shrink a card's intervals after lapses, grow them after Easy runs.
+  // Off => every card is scheduled as if it had never been failed.
+  easeEnabled: true,
 
   // Daily reminder
   dailyReminderEnabled: false,
@@ -100,10 +108,26 @@ export async function bumpStats({ isLapse, now = Date.now() }) {
   s.totalReviews += 1;
   if (isLapse) s.lapses += 1;
   s.lastReviewAt = now;
-  const dayKey = new Date(now).toISOString().slice(0, 10);
-  s.byDay[dayKey] = (s.byDay[dayKey] || 0) + 1;
+  const key = dayKeyMs(now);       // LOCAL day — see lib/dates.js
+  s.byDay[key] = (s.byDay[key] || 0) + 1;
   await set(KEYS.STATS, s);
   return s;
 }
+
+export async function setStats(stats) { return set(KEYS.STATS, stats); }
+
+// ---------- schema version (one-shot migrations) ----------
+export async function getSchemaVersion()  { return get(KEYS.SCHEMA, 0); }
+export async function setSchemaVersion(v) { return set(KEYS.SCHEMA, v); }
+
+// ---------- goals ----------
+export async function getGoals()             { return get(KEYS.GOALS, []); }
+export async function setGoals(goals)        { return set(KEYS.GOALS, goals); }
+export async function getActiveGoalId()      { return get(KEYS.ACTIVE_GOAL, null); }
+export async function setActiveGoalId(id)    { return set(KEYS.ACTIVE_GOAL, id); }
+
+// ---------- problem catalog ----------
+export async function getCatalog()           { return get(KEYS.CATALOG, null); }
+export async function setCatalog(rows)       { return set(KEYS.CATALOG, { fetchedAt: Date.now(), rows }); }
 
 export { KEYS, DEFAULT_SETTINGS };

@@ -16,6 +16,15 @@
 //   - new card                : intervalMin = base[button]
 //   - "again"                 : reset reps; intervalMin = base.again; lapses += 1
 //   - subsequent good/hard/easy : intervalMin = max(base[button], prev * growth[button])
+//   ...then every result is scaled by the card's EASE (below).
+//
+// Ease (the SM-2 idea, re-expressed as a multiplier on our configurable base):
+// without it, a lapse only reset `reps`, so the very next Good jumped straight
+// back to the full 3-day base — a problem failed five times was scheduled
+// exactly like one never failed. Now each card carries `ease` (default 1.0):
+//   again x0.80, hard x0.95, good x1.00, easy x1.05, clamped to [0.5, 1.5],
+// applied from the NEXT grade on (the current grade uses the ease you had).
+// A never-failed card stays at 1.0, so its schedule is bit-for-bit unchanged.
 
 export const BUTTONS = [
   { id: 'again', label: 'Again', quality: 0 },
@@ -42,6 +51,11 @@ export const DEFAULT_GROWTH = Object.freeze({
   easy:  3.5,
 });
 
+export const EASE = Object.freeze({
+  start: 1.0, min: 0.5, max: 1.5,
+  step: { again: 0.80, hard: 0.95, good: 1.0, easy: 1.05 },
+});
+
 const MIN_MS = 60 * 1000;
 
 export function newCard(slug, title, site = null) {
@@ -50,6 +64,7 @@ export function newCard(slug, title, site = null) {
     title: title ?? slug,
     site,
     intervalMin: 0,
+    ease: EASE.start,
     reps: 0,
     lapses: 0,
     due: Date.now(),
@@ -78,22 +93,33 @@ export function grade(card, quality, settings = {}, now = Date.now()) {
   const intervals = { ...DEFAULT_INTERVALS_MIN, ...(settings.intervals || {}) };
   const growth    = { ...DEFAULT_GROWTH,        ...(settings.growth    || {}) };
 
+  const useEase = settings.easeEnabled !== false;
+
   const c = { ...card, history: [...(card.history ?? [])] };
   const prev = c.intervalMin ?? 0;
   const base = intervals[button];
 
+  // THIS interval uses the ease earned so far; the button then nudges ease for
+  // future intervals. So a first grade always lands exactly on the configured
+  // base (Again = 30m means 30m), and a lapse shortens the NEXT interval.
+  const priorEase = useEase ? (c.ease ?? EASE.start) : EASE.start;
+  const nextEase = useEase
+    ? Math.min(EASE.max, Math.max(EASE.min, priorEase * EASE.step[button]))
+    : EASE.start;
+  c.ease = Math.round(nextEase * 1000) / 1000;
+
+  let raw;
   if (button === 'again') {
     c.lapses = (c.lapses ?? 0) + 1;
     c.reps = 0;
-    c.intervalMin = base;
+    raw = base;
   } else {
-    if ((c.reps ?? 0) === 0 || prev === 0) {
-      c.intervalMin = base;
-    } else {
-      c.intervalMin = Math.max(base, Math.round(prev * growth[button]));
-    }
+    raw = ((c.reps ?? 0) === 0 || prev === 0)
+      ? base
+      : Math.max(base, Math.round(prev * growth[button]));
     c.reps = (c.reps ?? 0) + 1;
   }
+  c.intervalMin = Math.max(1, Math.round(raw * priorEase));
 
   c.due = now + c.intervalMin * MIN_MS;
   return { card: c, prevIntervalMin: prev, nextIntervalMin: c.intervalMin };

@@ -220,6 +220,45 @@ h2 {
 .expand .h-row .h-grade.good  { color: #7eba8a; }
 .expand .h-row .h-grade.easy  { color: #8aa8c4; }
 
+.expand-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid rgba(255,255,255,0.04);
+  padding-top: 8px;
+}
+.expand-actions button.start-here {
+  background: transparent;
+  border: 1px solid rgba(246, 231, 198, 0.3);
+  color: #f6e7c6;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 400;
+}
+.expand-actions button.start-here:hover {
+  background: rgba(246, 231, 198, 0.08);
+  border-color: rgba(246, 231, 198, 0.5);
+}
+.expand-actions button.delete-card {
+  background: transparent;
+  border: 1px solid rgba(215, 122, 114, 0.25);
+  color: #d77a72;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 400;
+}
+.expand-actions button.delete-card:hover {
+  background: rgba(215, 122, 114, 0.08);
+  border-color: rgba(215, 122, 114, 0.5);
+}
+
 .footer {
   display: flex;
   align-items: center;
