@@ -37,7 +37,12 @@
     const tag = (t.tagName || '').toLowerCase();
     return tag === 'input' || tag === 'textarea' || t.isContentEditable;
   }
+  // After an extension update, the copy of this script already running in an
+  // open tab is cut off from the extension. It must not keep showing its old
+  // popup or grabbing keys: it removes itself, and the refreshed tab has the new one.
+  const orphaned = () => { try { return !chrome.runtime?.id; } catch (e) { return true; } };
   window.addEventListener('keydown', (e) => {
+    if (orphaned()) { root?.remove(); return; }
     if (!root || root.classList.contains('lcanki-hidden')) return;
     if (e.key === 'Escape' || e.key === 'Esc') {
       e.preventDefault();
@@ -106,6 +111,7 @@
   // ---------- inject.js bridge ----------
   const injectUrl = chrome.runtime.getURL('content/inject.js');
   function injectPageScript() {
+    if (document.documentElement.hasAttribute('data-lcanki-inject')) return;   // the manifest already loaded it
     if (document.querySelector(`script[src="${injectUrl}"]`)) return;
     const s = document.createElement('script');
     s.src = injectUrl;
@@ -340,7 +346,7 @@
     if (/accepted/i.test(status)) {
       // A network verdict is final, so there is nothing to wait for. A DOM
       // verdict gets a beat in case a worse (real) status lands after it.
-      const delay = source === 'network' ? 250 : 1800;
+      const delay = source === 'network' ? 60 : 1800;
       acModalTimer = setTimeout(() => {
         if (lastSubmission && /accepted/i.test(lastSubmission.status)) {
           stopTimer();   // freeze time at the moment of acceptance
@@ -359,9 +365,24 @@
     if (root) setSubmissionBadge(null);
   }
 
+  // LeetCode shows the difficulty on the page; reading it there is instant.
+  function pageDifficulty() {
+    const el = document.querySelector('[class*="text-difficulty-"], [diff]');
+    const m = (el?.textContent || '').trim().match(/^(Easy|Medium|Hard)$/i);
+    return m ? m[1][0].toUpperCase() + m[1].slice(1).toLowerCase() : null;
+  }
+  function showDifficulty(d) {
+    const el = root?.querySelector('.lcanki-diff');
+    if (!el || (!d && !el.hidden)) return;
+    el.textContent = d || '';
+    el.hidden = !d;
+    el.dataset.level = (d || '').toLowerCase();
+  }
   function showPanel() {
+    if (orphaned()) { root?.remove(); return; }
     if (!root) ensureRoot();
     setTitle(currentTitle());
+    showDifficulty(pageDifficulty());
     root.classList.remove('lcanki-hidden');
     refreshFromState();
   }
@@ -511,8 +532,7 @@
     // 4 very hard, S stars it — and the number you press flashes up. Esc (or
     // the × that shows on hover) closes it: the solve is kept, no review.
     root.innerHTML = `
-      <div class="lcanki-panel lcanki-bar" role="group" aria-label="How hard was it? Press 1 (easy) to 4 (very hard)"
-           title="1 easy · 2 ok · 3 hard · 4 very hard · S star · Esc close">
+      <div class="lcanki-panel lcanki-bar" role="group" aria-label="How hard was it? Press 1 (easy) to 4 (very hard)">
         <span class="lcanki-title"></span>
         <span class="lcanki-diff" hidden></span>
         <button class="lcanki-star" type="button" aria-pressed="false" title="Come back to this (S)" aria-label="Star: come back to this">☆</button>
@@ -634,12 +654,7 @@
     const resp = await send('getCardWithPredictions', { slug, title: currentTitle() });
     if (!resp?.ok) return;
     showStar(resp.starred ?? resp.card?.starred);
-    const diff = root?.querySelector('.lcanki-diff');
-    if (diff) {
-      diff.textContent = resp.difficulty || '';
-      diff.hidden = !resp.difficulty;
-      diff.dataset.level = (resp.difficulty || '').toLowerCase();
-    }
+    showDifficulty(pageDifficulty() || resp.difficulty);
     setIntervals(resp.predictions);
     const c = resp.card;
     if (!c || (!c.reps && !c.lapses))      setStreak('new');

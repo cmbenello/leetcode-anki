@@ -17,6 +17,13 @@
 // exact, needs no submit-intent heuristic, and cannot be confused by history.
 
 (function () {
+  // Loaded by the manifest at document_start in the page's own world, so the
+  // fetch/XHR hooks are in place before LeetCode's code keeps references to
+  // them. The content script's <script>-tag injection is only a fallback; run
+  // once either way.
+  if (window.__lcankiInjected) return;
+  window.__lcankiInjected = true;
+  document.documentElement?.setAttribute('data-lcanki-inject', '1');
   const TAG = 'LCANKI_CODE';
 
   function getCurrentEditor() {

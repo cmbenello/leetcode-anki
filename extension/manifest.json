@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LeetCode Anki",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Spaced repetition for LeetCode + NeetCode with auto-commits to a GitHub progress repo.",
   "permissions": [
     "storage",
@@ -42,8 +42,21 @@
   "content_scripts": [
     {
       "matches": [
-        "https://leetcode.com/problems/*",
-        "https://*.leetcode.com/problems/*",
+        "https://leetcode.com/*",
+        "https://*.leetcode.com/*",
+        "https://neetcode.io/*",
+        "https://*.neetcode.io/*"
+      ],
+      "js": [
+        "content/inject.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://leetcode.com/*",
+        "https://*.leetcode.com/*",
         "https://neetcode.io/*",
         "https://*.neetcode.io/*"
       ],
@@ -94,5 +107,6 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "minimum_chrome_version": "111"
 }
