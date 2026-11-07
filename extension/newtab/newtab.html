@@ -2,9 +2,17 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <!-- dark from the very first frame: no white flash before the CSS loads -->
+  <!-- dark from the very first frame: no white flash before the CSS loads.
+       And nothing shows until the graph is drawn (newtab.js adds
+       .lcanki-ready), so the bare page never flashes up first; if a script
+       ever fails, it shows anyway after half a second. -->
   <meta name="color-scheme" content="dark" />
-  <style>html, body { background: #17181b; }</style>
+  <style>
+    html, body { background: #17181b; }
+    body { visibility: hidden; animation: lcanki-reveal 0s linear 0.5s forwards; }
+    html.lcanki-ready body { visibility: visible; animation: none; }
+    @keyframes lcanki-reveal { to { visibility: visible; } }
+  </style>
   <title>New Tab</title>
   <script src="theme-init.js"></script>
   <link rel="stylesheet" href="newtab.css" />

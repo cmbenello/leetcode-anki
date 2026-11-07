@@ -358,6 +358,8 @@ await (async function paintCached() {
   growth.update(c.view);
   shownKey = viewKey(c.view);
 })();
+// graph drawn (or nothing cached yet): show the page
+document.documentElement.classList.add('lcanki-ready');
 
 // Refreshes can overlap (a pill click and a tab-focus reload); only the
 // newest one may draw.

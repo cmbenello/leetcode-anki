@@ -299,7 +299,6 @@ function linkPath(path, L, a, b) {
  * touch them — go into separate faint batches.
  */
 const STAR = '__starred';                       // the ★ filter, alongside the phases
-const PICKED = 2.1;                             // dot size under a filter: findable at a glance
 const inFilter = (nd, f) => !f || (f === STAR ? !!nd.starred : nd.phase === f);
 function buildPaint(L, phase = null) {
   for (const nd of L.nodes) nd.inPhase = inFilter(nd, phase);
@@ -409,11 +408,12 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
   }
 
   // ------------------------------------------------ filter transitions ----
-  // Each dot has a visual state — s: size factor, a: topic colour (1) vs
-  // faded grey (0), g: glow — that eases between states when the filter
-  // changes: picked dots swell and glow in, the rest fade back.
-  const V_NORMAL = { s: 1, a: 1, g: 0 }, V_PICK = { s: PICKED, a: 1, g: 1 }, V_FADE = { s: 1, a: 0, g: 0 };
-  const TRANSITION_MS = 520;
+  // Each dot has a visual state — a: topic colour (1) vs faded grey (0),
+  // g: glow — that eases between states when the filter changes: a soft
+  // pastel glow rises behind the picked dots while the rest fade back.
+  // Dots keep their size.
+  const V_NORMAL = { a: 1, g: 0 }, V_PICK = { a: 1, g: 1 }, V_FADE = { a: 0, g: 0 };
+  const TRANSITION_MS = 1100;
   const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   let anim = null;
   const targetOf = (nd) => (!phase ? V_NORMAL : nd.inPhase ? V_PICK : V_FADE);
@@ -429,15 +429,15 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
   }
   function stepTransition() {
     const t = Math.min(1, (performance.now() - anim.start) / TRANSITION_MS);
-    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;     // ease in-out
+    const e = (1 - Math.cos(Math.PI * t)) / 2;                                // gentle sine ease
     for (const nd of L.nodes) {
-      const f = nd.from, g = nd.to;
-      nd.vis = { s: f.s + (g.s - f.s) * e, a: f.a + (g.a - f.a) * e, g: f.g + (g.g - f.g) * e };
+      const f = nd.from, to = nd.to;
+      nd.vis = { a: f.a + (to.a - f.a) * e, g: f.g + (to.g - f.g) * e };
     }
     if (t >= 1) anim = null;
   }
   // link brightness from the dots at its ends: normal 0.2, picked 0.34, faded 0.03
-  const linkW = (v) => 0.03 + v.a * 0.17 + ((v.s - 1) / (PICKED - 1)) * 0.14;
+  const linkW = (v) => 0.03 + v.a * 0.17 + v.g * 0.12;
 
   function draw() {
     const ctx = canvas.getContext('2d');
@@ -507,41 +507,41 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
         if (al <= 0) continue;
         let p = greys.get(al);
         if (!p) greys.set(al, p = new Path2D());
-        const r = nd.dot * nd.vis.s / k;
+        const r = nd.dot / k;
         p.moveTo(nd.x + r, nd.y);
         p.arc(nd.x, nd.y, r, 0, TAU);
       }
       for (const [al, p] of greys) { ctx.fillStyle = `rgba(206,210,217,${al})`; ctx.fill(p); }
 
-      // glow behind the picked ones, strengthening as they come in
+      // a soft pastel glow behind the picked ones, rising as they come in
       for (const nd of L.nodes) {
         if (nd.vis.g < 0.01) continue;
-        const r = nd.dot * nd.vis.s / k, R = r * 3.4 + 3 / k, hue = paint.hue[nd.sec] ?? 220;
-        const grad = ctx.createRadialGradient(nd.x, nd.y, r * 0.5, nd.x, nd.y, R);
-        grad.addColorStop(0, `hsla(${hue}, 55%, 72%, ${(0.34 * nd.vis.g).toFixed(3)})`);
-        grad.addColorStop(1, `hsla(${hue}, 55%, 72%, 0)`);
+        const r = nd.dot / k, R = r * 5.5 + 5 / k, hue = paint.hue[nd.sec] ?? 220, g = nd.vis.g;
+        const grad = ctx.createRadialGradient(nd.x, nd.y, r * 0.6, nd.x, nd.y, R);
+        grad.addColorStop(0, `hsla(${hue}, 38%, 84%, ${(0.2 * g).toFixed(3)})`);
+        grad.addColorStop(0.45, `hsla(${hue}, 38%, 84%, ${(0.07 * g).toFixed(3)})`);
+        grad.addColorStop(1, `hsla(${hue}, 38%, 84%, 0)`);
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.arc(nd.x, nd.y, R, 0, TAU);
         ctx.fill();
       }
 
-      // the dots in colour: picked ones larger, bright, with a thin edge so
-      // touching dots stay apart; the rest fading out
+      // the dots in colour, same size as ever: picked ones warm up to their
+      // topic's bright tone, the rest fade out
       for (const nd of L.nodes) {
         if (nd.vis.a < 0.004) continue;
-        const r = nd.dot * nd.vis.s / k, big = nd.vis.s > 1.15;
-        ctx.globalAlpha = nd.vis.a;
-        if (big) {
-          ctx.beginPath();
-          ctx.arc(nd.x, nd.y, r + 1.1 / k, 0, TAU);
-          ctx.fillStyle = COLORS.bg;
-          ctx.fill();
-        }
+        const r = nd.dot / k;
         ctx.beginPath();
         ctx.arc(nd.x, nd.y, r, 0, TAU);
-        ctx.fillStyle = big ? paint.tone[nd.sec].recent : paint.tone[nd.sec][nd.tone];
+        ctx.globalAlpha = nd.vis.a;
+        ctx.fillStyle = paint.tone[nd.sec][nd.tone];
         ctx.fill();
+        if (nd.vis.g > 0.01) {
+          ctx.globalAlpha = nd.vis.a * nd.vis.g;
+          ctx.fillStyle = paint.tone[nd.sec].recent;
+          ctx.fill();
+        }
       }
       ctx.globalAlpha = 1;
       if (anim) requestDraw();                   // next frame of the transition
@@ -558,7 +558,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       ctx.lineWidth = 1.3 / k;
       ctx.stroke(p);
       ctx.beginPath();
-      ctx.arc(hover.x, hover.y, hover.dot * (phase ? PICKED * 1.25 : 1.8) / k, 0, TAU);
+      ctx.arc(hover.x, hover.y, hover.dot * 1.8 / k, 0, TAU);
       ctx.fillStyle = COLORS.hi;
       ctx.fill();
     }
@@ -724,7 +724,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     for (const nd of L.nodes) {
       if (!nd.inPhase) continue;                 // faded problems don't pop up
       const d = Math.hypot(nd.x - x, nd.y - y);
-      if (d <= nd.dot * (phase ? PICKED : 1) / k + 4 / s && d < bd) { bd = d; best = nd; }
+      if (d <= nd.dot / k + 4 / s && d < bd) { bd = d; best = nd; }
     }
     return best;
   }
