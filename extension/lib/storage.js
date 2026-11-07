@@ -33,6 +33,8 @@ const DEFAULT_SETTINGS = {
 
   // New-tab dashboard colour scheme: 'glass' | 'ocean' | 'dusk' | 'graphite'
   theme: 'glass',
+  // Where clicking a problem on the dashboard takes you: 'leetcode' | 'neetcode'
+  openOn: 'leetcode',
 
   // Daily reminder
   dailyReminderEnabled: false,

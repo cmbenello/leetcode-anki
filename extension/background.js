@@ -145,6 +145,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse(await getRecommendations(msg.id, msg.k));
           break;
         }
+        case 'neetcodeProgress': {
+          sendResponse(await mergeNeetcodeProgress(msg.slugs || [], !!msg.account));
+          break;
+        }
         case 'startImport': {
           sendResponse(await startImport(msg.perDay));
           break;
@@ -761,7 +765,17 @@ function cardsToAttempts(cards, metaAll) {
                  seconds: h.durationMs ? h.durationMs / 1000 : null, verdict: h.submission?.status ?? null,
                  factors: h.factors ?? null, kind: 'graded' });
     }
-    const subs = (c.submissions ?? []).slice().sort((a, b) => a.t - b.t);
+    // NeetCode completions have no time: they can't join a submission session,
+    // but they ARE evidence you solved it. Count one solve, placed at the very
+    // start of history (no recall bonus, no fake activity), and only when
+    // nothing dated already covers the problem.
+    const allSubs = c.submissions ?? [];
+    const dated = allSubs.filter(x => !x.undated);
+    if (allSubs.some(x => x.undated) && !hist.length && !dated.length) {
+      out.push({ slug: c.slug, ts: 1, correct: 1, tags, pPred: null, seconds: null,
+                 verdict: 'Accepted', factors: null, kind: 'neetcode' });
+    }
+    const subs = dated.slice().sort((a, b) => a.t - b.t);
     let group = [];
     const flush = () => {
       if (!group.length) return;
@@ -867,7 +881,7 @@ async function learnerState({ keep = null } = {}) {
 function firstSolvedAt(c) {
   const ts = [
     ...(c.history ?? []).filter(h => attemptCorrect(h)).map(h => h.t),
-    ...(c.submissions ?? []).filter(x => /accepted/i.test(x.status)).map(x => x.t),
+    ...(c.submissions ?? []).filter(x => !x.undated && /accepted/i.test(x.status)).map(x => x.t),
   ];
   const ok = ts.filter(Number.isFinite);
   if (ok.length) return Math.min(...ok);
@@ -875,21 +889,86 @@ function firstSolvedAt(c) {
   return (c.reps ?? 0) > 0 && Number.isFinite(h0) ? h0 : null;
 }
 
-function solvedProblems(cards, metaAll) {
+function solvedProblems(cards, metaAll, nc = null) {
   const out = [];
   for (const c of Object.values(cards)) {
     if (!c?.slug || !isSolved(c)) continue;
     const m = metaAll[c.slug];
+    const first = firstSolvedAt(c);
+    // Solved only on NeetCode (no date): sort before everything dated, so
+    // these form the trunk near the centre rather than a fake burst today.
+    const undated = first == null && (c.submissions ?? []).some(x => x.undated);
     out.push({
       slug: c.slug, title: c.title || c.slug, site: c.site || 'leetcode',
       tags: tagSlugs(m), tagNames: (m?.tags || []).map(t => t.name),
       difficulty: m?.difficulty ?? null,
-      t: firstSolvedAt(c) ?? c.history?.[0]?.t ?? Date.now(),
+      t: undated ? 0 : (first ?? c.history?.[0]?.t ?? Date.now()),
+      undated,
       due: c.due ?? null, reviews: (c.history ?? []).length, lapses: c.lapses ?? 0,
       url: normalizeProblemUrl(c.lastUrl || problemUrl(c.site || 'leetcode', c.slug)),
+      nc: nc?.bySlug[c.slug]?.n ?? null,
     });
   }
-  return out.sort((a, b) => a.t - b.t);
+  return out.sort((a, b) => a.t - b.t || (a.slug < b.slug ? -1 : 1));
+}
+
+// ---------- NeetCode ----------
+// data/neetcode.json (scripts/update-neetcode.mjs): LeetCode slug -> NeetCode
+// page slug, pattern, and list membership (bit 1 NeetCode 150, 2 NeetCode
+// 250, 4 Blind 75).
+let ncMemo = null;
+async function neetcodeIndex() {
+  if (ncMemo) return ncMemo;
+  try {
+    const snap = await (await fetch(chrome.runtime.getURL('data/neetcode.json'))).json();
+    const bySlug = Object.fromEntries((snap.rows || []).map(r => [r.s, r]));
+    ncMemo = {
+      bySlug,
+      nc150: snap.rows.filter(r => r.f & 1).map(r => r.s),
+      nc250: snap.rows.filter(r => r.f & 2).map(r => r.s),
+    };
+  } catch (e) {
+    ncMemo = { bySlug: {}, nc150: [], nc250: [] };
+  }
+  return ncMemo;
+}
+const neetcodeUrl = (ncSlug) => (ncSlug ? `https://neetcode.io/problems/${ncSlug}` : null);
+
+/**
+ * Merge NeetCode's completed list (LeetCode slugs, read from neetcode.io by
+ * content/neetcode-sync.js). NeetCode keeps no dates, so each becomes one
+ * undated Accepted entry with a stable id — re-syncs never duplicate, and
+ * undated entries are kept out of the daily tracker and streak. New problems
+ * join reviews a few a day, like an import.
+ */
+async function mergeNeetcodeProgress(slugs, account) {
+  const valid = [...new Set(slugs.map(x => String(x).toLowerCase()).filter(x => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(x)))];
+  const cards = await getCards();
+  const cat = await catalogIndex();
+  const nc = await neetcodeIndex();
+  const now = Date.now();
+  let added = 0, newCards = 0;
+  for (const slug of valid) {
+    let c = cards[slug];
+    if (!c) {
+      c = newCard(slug, cat.bySlug[slug]?.title || nc.bySlug[slug]?.t || slugTitle(slug), 'leetcode');
+      c.lastUrl = `https://leetcode.com/problems/${slug}/`;
+      c.imported = true;
+      c.due = Number.MAX_SAFE_INTEGER;            // scheduled just below
+      cards[slug] = c;
+      newCards += 1;
+    }
+    c.submissions = c.submissions || [];
+    const id = `nc:${slug}`;
+    if (c.submissions.some(x => x.id === id)) continue;
+    c.submissions.push({ t: now, status: 'Accepted', id, source: 'neetcode', undated: true });
+    added += 1;
+  }
+  const st = await getImportState();
+  const scheduled = scheduleImported(cards, st?.perDay || 5, now);
+  if (added || scheduled) await setCards(cards);
+  await chrome.storage.local.set({ neetcodeSync: { at: now, count: valid.length, account, added, newCards } });
+  return { ok: true, added, newCards, total: valid.length };
 }
 
 // ---------- goals ----------
@@ -913,6 +992,11 @@ async function getGoalsWithProgress() {
 async function saveGoal(fields) {
   let f = { ...fields };
   if (f.preset === 'blind75') f = { ...PRESETS.blind75, ...f, type: 'list', slugs: PRESETS.blind75.slugs };
+  if (f.preset === 'nc150' || f.preset === 'nc250') {
+    const nc = await neetcodeIndex();
+    const slugs = f.preset === 'nc150' ? nc.nc150 : nc.nc250;
+    f = { name: f.preset === 'nc150' ? 'NeetCode 150' : 'NeetCode 250', ...f, type: 'list', slugs };
+  }
   if (f.type === 'list' && typeof f.slugsText === 'string') f.slugs = parseSlugList(f.slugsText);
   if (f.type === 'list' && !f.slugs?.length) return { ok: false, error: 'a list goal needs at least one problem' };
   if (f.type === 'tags' && !f.tags?.length) return { ok: false, error: 'pick at least one topic' };
@@ -939,9 +1023,9 @@ async function goalById(id) {
 
 /** Problems for the radial growth view, oldest first. */
 async function getGoalView(id) {
-  const [cards, metaAll] = [await getCards(), await richMeta()];
+  const [cards, metaAll, nc] = [await getCards(), await richMeta(), await neetcodeIndex()];
   const goal = id ? await goalById(id) : null;
-  const all = solvedProblems(cards, metaAll);
+  const all = solvedProblems(cards, metaAll, nc);
   const problems = goal ? all.filter(p => goalMatches(goal, p.slug, p.tags)) : all;
   const progress = goal ? goalProgress(goal, all) : { done: all.length, target: Math.max(all.length, 1), pct: 1 };
   return { ok: true, goal, progress, problems, now: Date.now() };
@@ -950,6 +1034,7 @@ async function getGoalView(id) {
 async function getRecommendations(id, k = 5) {
   ensureCatalog();                                   // refresh in the background if stale
   const { st, attempts, known, cat } = await learnerState();
+  const nc = await neetcodeIndex();
   const goal = id ? await goalById(id) : null;
   const catalog = cat.rows.length ? cat.rows : Object.values(known);
   const modelGoal = goal && goal.type !== 'all'
@@ -964,6 +1049,7 @@ async function getRecommendations(id, k = 5) {
       slug: r.item.slug, title: r.item.title || r.item.slug, difficulty: r.item.difficulty ?? null,
       tags: r.item.tags || [], p: r.p, recall: r.recall, reason: r.reason, variant: r.variant,
       retry: r.retry, onGoal: r.onGoal, url: `https://leetcode.com/problems/${r.item.slug}/`,
+      ncUrl: neetcodeUrl(nc.bySlug[r.item.slug]?.n),
       evidence: evidenceFor(r.item, attempts, known, 3),
     })),
     // Weakest among the goal's own topics when it has them — "you're weak at

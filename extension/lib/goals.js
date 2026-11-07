@@ -24,7 +24,10 @@ export const BLIND_75 = [
   'sum-of-two-integers', 'number-of-1-bits', 'counting-bits', 'missing-number', 'reverse-bits',
   // dynamic programming
   'climbing-stairs', 'coin-change', 'longest-increasing-subsequence', 'longest-common-subsequence',
-  'word-break', 'combination-sum-iv', 'house-robber', 'house-robber-ii', 'decode-ways', 'unique-paths',
+  // The original list links "Combination Sum" to combination-sum-iv; NeetCode
+  // (where most people track Blind 75) uses combination-sum. Match NeetCode so
+  // synced NeetCode progress completes it.
+  'word-break', 'combination-sum', 'house-robber', 'house-robber-ii', 'decode-ways', 'unique-paths',
   'jump-game',
   // graph
   'clone-graph', 'course-schedule', 'pacific-atlantic-water-flow', 'number-of-islands',

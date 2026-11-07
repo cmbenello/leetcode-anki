@@ -45,11 +45,26 @@ Options → **Import LeetCode history** pulls every submission from your LeetCod
 - Imported problems join your reviews a few a day (5 by default), longest-ago first, instead of all at once.
 - Re-running only adds what's new.
 
-NeetCode problems you solved on LeetCode come in this way. NeetCode's own editor has no history API, so problems solved only there can't be imported.
+## NeetCode
 
-## Colour schemes
+Your NeetCode progress syncs automatically. Open neetcode.io while logged in and visit any practice list. A small read-only script on neetcode.io reads the completed list NeetCode keeps in your browser. Those entries are LeetCode slugs, so they map onto the same problems.
 
-Use the dots next to ⚙ on the new-tab page: **Glass** (default; Apple-style frosted glass over a blue wallpaper), **Ocean**, **Dusk** or **Graphite**. Every colour, including the growth canvas, comes from theme tokens in `newtab/newtab.css`.
+NeetCode doesn't record dates, so synced problems form the trunk at the centre of the growth view and stay out of the daily tracker.
+
+- Goals can track **NeetCode 150** and **NeetCode 250** directly.
+- Next up links each problem to its NeetCode page.
+- Options → *Open problems on* chooses whether clicks go to LeetCode or NeetCode.
+- The list data is bundled in `extension/data/neetcode.json`. Refresh it with `node scripts/update-neetcode.mjs`.
+
+## The new-tab page
+
+It's deliberately minimal: your goal pills, the growth view, and a faint ⚙ in the corner, all in an Apple-style frosted-glass look over a blue wallpaper. Below that are the daily tracker, stats, Next up and your problem lists.
+
+- **Zoom** the growth view with a pinch or ⌘/Ctrl+scroll.
+- **Drag** to pan, **double-click** to zoom in, and use ⤢ to reset.
+- Plain scrolling still scrolls the page.
+
+Colours come from theme tokens in `newtab/newtab.css`.
 
 ## Problem catalog
 

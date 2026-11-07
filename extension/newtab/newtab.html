@@ -8,25 +8,7 @@
 </head>
 <body>
   <main>
-    <header>
-      <div class="title-block">
-        <h1 id="greeting">Today</h1>
-        <p id="date" class="sub"></p>
-      </div>
-      <div class="header-actions">
-        <div id="session-controls" class="session-controls">
-          <button id="start-session" class="primary">Start session</button>
-          <button id="end-session-home" class="end-btn hidden">End</button>
-        </div>
-        <div id="theme-dots" class="theme-dots" role="radiogroup" aria-label="Colour scheme">
-          <button class="theme-dot" data-theme="glass" title="Glass" aria-label="Glass theme"></button>
-          <button class="theme-dot" data-theme="ocean" title="Ocean" aria-label="Ocean theme"></button>
-          <button class="theme-dot" data-theme="dusk" title="Dusk" aria-label="Dusk theme"></button>
-          <button class="theme-dot" data-theme="graphite" title="Graphite" aria-label="Graphite theme"></button>
-        </div>
-        <a id="open-options" href="#" title="Settings">⚙</a>
-      </div>
-    </header>
+    <a id="open-options" class="corner-gear" href="#" title="Settings" aria-label="Settings">⚙</a>
 
     <section class="goals">
       <div id="goal-pills" class="goal-pills"></div>
@@ -40,6 +22,8 @@
         <div id="goal-type" class="seg" role="radiogroup" aria-label="Goal type">
           <button type="button" data-type="tags" class="on">Topics</button>
           <button type="button" data-type="blind75">Blind 75</button>
+          <button type="button" data-type="nc150">NeetCode 150</button>
+          <button type="button" data-type="nc250">NeetCode 250</button>
           <button type="button" data-type="list">My list</button>
           <button type="button" data-type="all">Everything</button>
         </div>

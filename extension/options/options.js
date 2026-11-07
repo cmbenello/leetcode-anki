@@ -208,6 +208,20 @@ $('#import-cancel').addEventListener('click', async () => {
 });
 refreshImport();
 
+// ---------- NeetCode ----------
+(async () => {
+  const st = await getSettings();
+  $('#open-on').value = st.openOn || 'leetcode';
+  $('#open-on').addEventListener('change', async () => {
+    await setSettings({ openOn: $('#open-on').value });
+    setStatus($('#status'), 'saved.', 'ok');
+  });
+  const { neetcodeSync } = await chrome.storage.local.get('neetcodeSync');
+  $('#nc-status').textContent = neetcodeSync
+    ? `Last synced ${new Date(neetcodeSync.at).toLocaleString()}: ${neetcodeSync.count} completed problem${neetcodeSync.count === 1 ? '' : 's'} on NeetCode${neetcodeSync.account ? '' : ' (logged-out progress only, so log in and open a practice list to sync your account)'}.`
+    : 'Not synced yet. Open neetcode.io and visit a practice list.';
+})();
+
 $('#import').addEventListener('click', () => $('#import-file').click());
 $('#import-file').addEventListener('change', async (ev) => {
   const file = ev.target.files?.[0];

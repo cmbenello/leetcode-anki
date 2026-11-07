@@ -138,11 +138,26 @@
         <button id="import-cancel" hidden>Stop</button>
         <span id="import-status"></span>
       </div>
+    </section>
+
+    <section>
+      <h2>NeetCode</h2>
       <p class="hint">
-        NeetCode: most NeetCode problems are LeetCode problems, so anything you solved on
-        LeetCode comes in here. Problems solved only in NeetCode's own editor can't be
-        imported: NeetCode has no history API to read.
+        Your NeetCode progress syncs automatically. Open neetcode.io while logged in and visit
+        any practice list (NeetCode 150, 250, …). The extension reads the completed list NeetCode
+        keeps in your browser, read-only, and marks those problems solved. NeetCode doesn't record
+        dates, so these problems sit at the centre of the growth view and don't show in the daily
+        tracker. Goals can track NeetCode 150 and NeetCode 250 directly.
       </p>
+      <div class="row">
+        <label class="inline">Open problems on
+          <select id="open-on">
+            <option value="leetcode">LeetCode</option>
+            <option value="neetcode">NeetCode (when it has the problem)</option>
+          </select>
+        </label>
+      </div>
+      <div class="row"><span id="nc-status" class="hint"></span></div>
     </section>
 
     <section>

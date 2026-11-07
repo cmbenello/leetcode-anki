@@ -275,13 +275,14 @@ button.ghost.danger:hover { color: var(--danger); border-color: var(--danger); }
 
 /* growth view */
 .growth { display: flex; justify-content: center; }
-.growth-stage { position: relative; width: 100%; max-width: 1100px; }
+.growth-stage { position: relative; width: 100%; max-width: 1100px; overflow: hidden; }
 .growth-canvas { display: block; margin: 0 auto; }
 .growth-hub {
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
+  transition: opacity 0.2s;
   width: 150px;
   text-align: center;
   pointer-events: none;
@@ -462,48 +463,46 @@ button.ghost.danger:hover { color: var(--danger); border-color: var(--danger); }
    Apple-style glass: a colourful fixed wallpaper underneath, and every
    surface a translucent, blurred, saturated pane with a bright top edge. */
 :root[data-theme="glass"] {
-  --bg:        #0a1530;
-  --ink:       #eef3ff;
-  --ink-dim:   rgba(226, 236, 255, 0.70);
-  --ink-faint: rgba(210, 225, 255, 0.46);
-  --heading:   #ffffff;
-  --accent:    #6cb8ff;
-  --accent-ink:#ffffff;
-  --accent-dim:rgba(255, 255, 255, 0.16);
-  --accent-edge:rgba(255, 255, 255, 0.38);
-  --panel:     rgba(255, 255, 255, 0.075);
-  --edge:      rgba(255, 255, 255, 0.16);
-  --edge-hi:   rgba(255, 255, 255, 0.26);
+  /* One colour: a soft silver, used at a few strengths. Nothing else. */
+  --mono:      206, 210, 217;      /* a softer, less blue-white silver */
+  --bg:        #161719;
+  --ink:       rgba(var(--mono), 0.88);
+  --ink-dim:   rgba(var(--mono), 0.66);
+  --ink-faint: rgba(var(--mono), 0.46);
+  --heading:   rgba(var(--mono), 0.96);
+  --accent:    rgba(var(--mono), 0.85);
+  --accent-ink:#0f1115;
+  --accent-dim:rgba(var(--mono), 0.10);
+  --accent-edge:rgba(var(--mono), 0.30);
+  --panel:     rgba(var(--mono), 0.035);
+  --edge:      rgba(var(--mono), 0.08);
+  --edge-hi:   rgba(var(--mono), 0.14);
   --glow:      transparent;
-  --easy:      #74e3b8;
-  --medium:    #ffae84;
-  --hard:      #ff8098;
-  --danger:    #ff8098;
-  --due:       rgba(255, 150, 170, 0.95);
-  --stem:      rgba(214, 233, 255, 0.34);
-  --stem-hi:   rgba(255, 255, 255, 0.85);
-  --leaflet:   rgba(180, 216, 255, 0.55);
-  --leaf-old:  rgba(140, 186, 245, 0.85);
-  --leaf-mid:  #9ccbff;
-  --leaf-recent:#cfe7ff;
-  --leaf-today:#ffffff;
-  --ring:      rgba(255, 255, 255, 0.24);
-  --ring-faint:rgba(255, 255, 255, 0.07);
-  --label:     rgba(238, 245, 255, 0.66);
-  --heat-0:    rgba(255, 255, 255, 0.08);
-  --heat-1:    rgba(130, 195, 255, 0.38);
-  --heat-2:    rgba(130, 195, 255, 0.58);
-  --heat-3:    rgba(170, 215, 255, 0.82);
-  --heat-4:    #eef7ff;
+  --easy:      rgba(var(--mono), 0.74);
+  --medium:    rgba(var(--mono), 0.74);
+  --hard:      rgba(var(--mono), 0.74);
+  --danger:    #d98a8a;               /* error banner only */
+  /* branch brightness by recency — still one colour */
+  --stem:      rgba(var(--mono), 0.36);
+  --stem-hi:   rgba(var(--mono), 0.95);
+  --leaf-old:  rgba(var(--mono), 0.34);
+  --leaf-mid:  rgba(var(--mono), 0.44);
+  --leaf-recent:rgba(var(--mono), 0.58);
+  --leaf-today:rgba(var(--mono), 0.78);
+  --halo:      rgba(var(--mono), 0.18);
+  --ring:      rgba(var(--mono), 0.16);
+  --ring-faint:rgba(var(--mono), 0.06);
+  --label:     rgba(var(--mono), 0.44);
+  --heat-0:    rgba(var(--mono), 0.07);
+  --heat-1:    rgba(var(--mono), 0.24);
+  --heat-2:    rgba(var(--mono), 0.42);
+  --heat-3:    rgba(var(--mono), 0.64);
+  --heat-4:    rgba(var(--mono), 0.92);
 }
 :root[data-theme="glass"] body {
   background:
-    radial-gradient(42% 52% at 10% 6%,  rgba(52, 118, 255, 0.60), transparent 70%),
-    radial-gradient(36% 46% at 90% 10%, rgba(0, 186, 255, 0.42), transparent 70%),
-    radial-gradient(46% 52% at 80% 90%, rgba(118, 88, 255, 0.50), transparent 70%),
-    radial-gradient(40% 46% at 6% 94%,  rgba(0, 158, 210, 0.38), transparent 70%),
-    radial-gradient(30% 30% at 50% 40%, rgba(70, 140, 255, 0.18), transparent 70%),
-    linear-gradient(160deg, #0b1b40 0%, #0a1431 50%, #0e1037 100%);
+    radial-gradient(120% 90% at 50% 40%, transparent 55%, rgba(0, 0, 0, 0.22) 100%),
+    linear-gradient(180deg, #18191c 0%, #151618 100%);
   background-attachment: fixed;
 }
 
@@ -607,3 +606,85 @@ button.ghost.danger:hover { color: var(--danger); border-color: var(--danger); }
 
 .stale-banner { display: flex; align-items: center; gap: 12px; cursor: default; }
 .stale-banner button.primary { padding: 6px 14px; font-size: 12.5px; flex-shrink: 0; }
+
+/* minimal chrome: a faint gear in the corner is all that's left of the header */
+.corner-gear {
+  position: fixed; top: 18px; right: 22px; z-index: 20;
+  color: var(--ink-faint); text-decoration: none; font-size: 17px; opacity: 0.55;
+  transition: opacity 0.15s, color 0.15s;
+}
+.corner-gear:hover { opacity: 1; color: var(--ink); }
+main { padding-top: 34px; }
+
+/* zoom controls: only shown while zoomed in */
+.growth-zoom {
+  position: absolute; top: 8px; right: 8px; z-index: 6;
+  display: flex; gap: 4px;
+}
+.growth-zoom[hidden] { display: none; }
+.growth-zoom button {
+  width: 30px; height: 30px; border-radius: 999px; cursor: pointer;
+  font: 500 15px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--ink);
+  background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2);
+  -webkit-backdrop-filter: blur(18px) saturate(170%); backdrop-filter: blur(18px) saturate(170%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.growth-zoom button:hover { background: rgba(255, 255, 255, 0.2); }
+.growth-canvas { touch-action: none; }
+
+.alt-link { margin-left: auto; color: var(--ink-faint); text-decoration: none; font-size: 11px; }
+.alt-link:hover { color: var(--ink); }
+
+/* ---- calmer glass: frosted, colourless, low contrast ---- */
+:root[data-theme="glass"] .stat,
+:root[data-theme="glass"] .card,
+:root[data-theme="glass"] .goal-form {
+  background: rgba(var(--mono), 0.035);
+  border: 1px solid rgba(var(--mono), 0.08);
+  -webkit-backdrop-filter: blur(24px) saturate(110%);
+  backdrop-filter: blur(24px) saturate(110%);
+  box-shadow: inset 0 1px 0 rgba(var(--mono), 0.07), 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+:root[data-theme="glass"] .pill,
+:root[data-theme="glass"] .chip,
+:root[data-theme="glass"] .seg,
+:root[data-theme="glass"] button.ghost,
+:root[data-theme="glass"] .growth-zoom button {
+  background: rgba(var(--mono), 0.05);
+  border: 1px solid rgba(var(--mono), 0.12);
+  color: var(--ink-dim);
+  -webkit-backdrop-filter: blur(18px) saturate(110%);
+  backdrop-filter: blur(18px) saturate(110%);
+  box-shadow: inset 0 1px 0 rgba(var(--mono), 0.08);
+}
+:root[data-theme="glass"] .pill.on,
+:root[data-theme="glass"] .chip.on,
+:root[data-theme="glass"] .seg button.on {
+  background: rgba(var(--mono), 0.12);
+  border-color: rgba(var(--mono), 0.26);
+  color: var(--ink);
+}
+:root[data-theme="glass"] .pill-count,
+:root[data-theme="glass"] .pill.on .pill-count { color: var(--ink-faint); }
+:root[data-theme="glass"] .pill-import { color: var(--ink-dim); }
+:root[data-theme="glass"] button.primary {
+  background: rgba(var(--mono), 0.14);
+  border: 1px solid rgba(var(--mono), 0.28);
+  color: var(--ink);
+  box-shadow: inset 0 1px 0 rgba(var(--mono), 0.12);
+}
+:root[data-theme="glass"] .growth-hub {
+  background: none;
+  border: 0;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+:root[data-theme="glass"] .growth-goal { color: var(--ink-dim); }
+:root[data-theme="glass"] .growth-done { color: var(--ink); font-weight: 400; }
+:root[data-theme="glass"] .growth-target { color: var(--ink-faint); }
+:root[data-theme="glass"] .growth-pace { color: var(--ink-dim); }
+:root[data-theme="glass"] .growth-tip { background: rgba(20, 22, 27, 0.9); border-color: rgba(var(--mono), 0.12); }
+:root[data-theme="glass"] .pmeter { background: rgba(var(--mono), 0.08); }
+:root[data-theme="glass"] .pmeter i { background: rgba(var(--mono), 0.55); }
+:root[data-theme="glass"] .diff { font-weight: 500; }

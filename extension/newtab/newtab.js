@@ -1,9 +1,15 @@
-import { getCards, getSettings, setSettings } from '../lib/storage.js';
+import { getCards, getSettings } from '../lib/storage.js';
 import { dayKey, dayKeyMs, computeStreak } from '../lib/dates.js';
 import { mountGrowth } from './growth.js';
 
+// Where problem links go: LeetCode, or NeetCode's page when one exists.
+let openOn = 'leetcode';
+getSettings().then(st => { openOn = st.openOn || 'leetcode'; }).catch(() => {});
+const ncPage = (nc) => (nc ? `https://neetcode.io/problems/${nc}` : null);
+const problemHref = (lcUrl, ncUrl) => (openOn === 'neetcode' && ncUrl ? ncUrl : lcUrl);
+
 const growth = mountGrowth(document.getElementById('growth'), {
-  onOpen: (p) => { location.href = p.url; },
+  onOpen: (p) => { location.href = problemHref(p.url, ncPage(p.nc)); },
 });
 
 
@@ -94,7 +100,9 @@ function activityByDay(cards, quantCards = []) {
   };
   for (const c of Object.values(cards)) {
     for (const h of c.history ?? []) add(h.t, c.slug);
-    for (const x of c.submissions ?? []) add(x.t, c.slug);
+    // NeetCode completions carry no date (t is just when we synced them);
+    // counting them would paint a fake burst on the sync day.
+    for (const x of c.submissions ?? []) if (!x.undated) add(x.t, c.slug);
   }
   for (const q of quantCards) for (const t of q.reviewTs || []) add(t, `quant:${q.id}`);
   return Object.fromEntries(Object.entries(perDay).map(([k, set]) => [k, set.size]));
@@ -141,21 +149,9 @@ function renderHeatmap(byDay) {
 }
 
 // ---------------------------------------------------------------- theme ----
-const THEMES = ['glass', 'ocean', 'dusk', 'graphite'];
-function applyTheme(t) {
-  const theme = THEMES.includes(t) ? t : 'glass';
-  document.documentElement.dataset.theme = theme;
-  try { localStorage.setItem('lcanki-theme', theme); } catch (e) {}
-  for (const b of document.querySelectorAll('.theme-dot')) b.classList.toggle('on', b.dataset.theme === theme);
-  growth.retheme();
-}
-for (const b of document.querySelectorAll('.theme-dot')) {
-  b.addEventListener('click', async () => {
-    applyTheme(b.dataset.theme);
-    await setSettings({ theme: b.dataset.theme });
-  });
-}
-getSettings().then(s => applyTheme(s.theme)).catch(() => applyTheme('glass'));
+// One look (Glass); the picker is gone. Earlier builds could save another
+// theme, so pin it here and in theme-init.js.
+document.documentElement.dataset.theme = 'glass';
 
 function makeRow(card) {
   const li = document.createElement('li');
@@ -254,18 +250,6 @@ async function load() {
 }
 
 async function loadDashboard() {
-  // Greeting
-  const now = new Date();
-  const hour = now.getHours();
-  const greeting = hour < 5 ? 'Late night'
-                 : hour < 12 ? 'Good morning'
-                 : hour < 18 ? 'Good afternoon'
-                 :             'Good evening';
-  $('#greeting').textContent = greeting;
-  $('#date').textContent = now.toLocaleDateString(undefined, {
-    weekday: 'long', month: 'long', day: 'numeric',
-  });
-
   const r = await send('getDueList');
   if (!r?.ok) return;
 
@@ -332,15 +316,6 @@ async function loadDashboard() {
   const quantUpcoming = quantRows.filter(c => (c.due ?? 0) > Date.now());
   const allUpcoming = [...(r.upcoming || []), ...quantUpcoming].sort((a, b) => (a.due ?? 0) - (b.due ?? 0));
   renderList('#upcoming-list', allUpcoming.slice(0, 10), '—');
-
-  // Start session button
-  const isActive = !!r.session;
-  $('#start-session').disabled = r.due.length === 0 && !isActive;
-  $('#start-session').textContent = isActive
-    ? 'Session running'
-    : (r.due.length > 0 ? `Start session (${r.due.length})` : 'Start session');
-  $('#session-controls').classList.toggle('has-session', isActive);
-  $('#end-session-home').classList.toggle('hidden', !isActive);
 }
 
 // ---------------------------------------------------------------- goals ----
@@ -433,7 +408,10 @@ function openForm(goal) {
 for (const b of document.querySelectorAll('#goal-type button')) {
   b.addEventListener('click', () => {
     setFormType(b.dataset.type);
-    if (b.dataset.type === 'blind75' && !$('#goal-name').value) $('#goal-name').value = 'Blind 75';
+    const presetName = { blind75: 'Blind 75', nc150: 'NeetCode 150', nc250: 'NeetCode 250' }[b.dataset.type];
+    if (presetName && (!$('#goal-name').value || Object.values({ a: 'Blind 75', b: 'NeetCode 150', c: 'NeetCode 250' }).includes($('#goal-name').value))) {
+      $('#goal-name').value = presetName;
+    }
   });
 }
 $('#goal-cancel').addEventListener('click', () => { $('#goal-form').hidden = true; });
@@ -451,7 +429,7 @@ $('#goal-form').addEventListener('submit', async (e) => {
     deadline: $('#goal-deadline').value || null,
     target: +$('#goal-target').value || 100,
   };
-  if (formType === 'blind75') goal.preset = 'blind75';
+  if (formType === 'blind75' || formType === 'nc150' || formType === 'nc250') goal.preset = formType;
   else if (formType === 'list') { goal.type = 'list'; goal.slugsText = $('#goal-slugs').value; }
   else if (formType === 'tags') {
     goal.type = 'tags';
@@ -557,7 +535,7 @@ function nextRow(rec) {
   const title = document.createElement('div');
   title.className = 'row-title';
   const a = document.createElement('a');
-  a.href = rec.url;
+  a.href = problemHref(rec.url, rec.ncUrl);
   a.textContent = rec.title;
   title.appendChild(a);
   const p = document.createElement('span');
@@ -581,6 +559,14 @@ function nextRow(rec) {
     const el = document.createElement('span'); el.className = 'tag'; el.textContent = humanTag(t);
     meta.appendChild(el);
   }
+  const other = openOn === 'neetcode' ? { href: rec.url, text: 'LeetCode' } : rec.ncUrl ? { href: rec.ncUrl, text: 'NeetCode' } : null;
+  if (other) {
+    const l = document.createElement('a');
+    l.className = 'alt-link';
+    l.href = other.href;
+    l.textContent = `${other.text} ↗`;
+    meta.appendChild(l);
+  }
   const why = document.createElement('div');
   why.className = 'why';
   why.textContent = rec.reason;
@@ -594,11 +580,6 @@ function nextRow(rec) {
   return li;
 }
 
-$('#start-session').addEventListener('click', async () => {
-  const r = await send('startSession');
-  if (r?.error === 'no due problems') alert('Nothing due — go pick a new problem.');
-  // No need to close — startSession navigates the current tab to the first problem.
-});
 
 function buttonLabel(q) {
   return q === 0 ? 'Again' : q === 3 ? 'Hard' : q === 5 ? 'Easy' : 'Good';
@@ -634,6 +615,7 @@ function renderRecent(cards) {
     // Submission events (every detected outcome, AC or otherwise). These
     // surface immediately on AC even before the user grades.
     for (const s of (c.submissions ?? [])) {
+      if (s.undated) continue;               // synced from NeetCode: no real date
       events.push({
         ...base,
         t: s.t,
@@ -716,10 +698,6 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('focus', maybeReload);
 
-$('#end-session-home').addEventListener('click', async () => {
-  await send('stopSession');
-  load();
-});
 
 $('#open-options').addEventListener('click', (e) => {
   e.preventDefault();

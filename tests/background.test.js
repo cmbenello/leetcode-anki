@@ -23,7 +23,18 @@ globalThis.chrome = {
   notifications: { create() {}, clear() {}, onClicked: noop },
   tabs: { query: async () => [], update: async () => {}, create: async () => {}, sendMessage: async () => {} },
 };
-globalThis.fetch = async () => ({ ok: false, status: 503, json: async () => ({}), text: async () => '' });
+// No network. Packaged extension files (data/*.json) are served from disk, as
+// chrome.runtime.getURL + fetch would inside the extension.
+import { readFileSync } from 'node:fs';
+const EXT_DIR = new URL('../extension/', import.meta.url);
+globalThis.fetch = async (url) => {
+  const u = String(url);
+  if (!/^https?:/.test(u)) {
+    const body = readFileSync(new URL(u, EXT_DIR), 'utf8');
+    return { ok: true, status: 200, json: async () => JSON.parse(body), text: async () => body };
+  }
+  return { ok: false, status: 503, json: async () => ({}), text: async () => '' };
+};
 const quiet = console.warn; console.warn = () => {};
 await import('../extension/background.js');
 
@@ -200,6 +211,48 @@ test('malformed card records cannot break goals, ranking or the due list', async
   assert.equal(g.totalSolved, 6, 'every recoverable card still counts');
   const v = await send({ kind: 'getGoalView', id: null });
   assert.ok(v.problems.every(p => Number.isFinite(p.t)), 'no NaN dates reach the growth view');
+});
+
+// ---- NeetCode ----
+test('NeetCode sync: completions become undated solves, deduped, kept out of dated history', async () => {
+  freshStore();
+  let r = await send({ kind: 'neetcodeProgress', slugs: ['two-sum', 'contains-duplicate', 'Not A Slug!'], account: true });
+  assert.ok(r.ok);
+  assert.equal(r.added, 2);
+  assert.equal(store.cards['contains-duplicate'].title, 'Contains Duplicate', 'title from the catalog');
+  assert.ok(store.cards['two-sum'].due > Date.now(), 'joins reviews later, not due now');
+  r = await send({ kind: 'neetcodeProgress', slugs: ['two-sum', 'contains-duplicate'], account: true });
+  assert.equal(r.added, 0, 're-sync adds nothing');
+  assert.equal(store.cards['two-sum'].submissions.length, 1);
+  const g = await send({ kind: 'getGoals' });
+  assert.equal(g.totalSolved, 2);
+  const v = await send({ kind: 'getGoalView', id: null });
+  assert.ok(v.problems.every(p => p.undated && p.t === 0), 'undated problems form the trunk');
+  assert.equal(v.problems.find(p => p.slug === 'two-sum').nc, 'two-integer-sum', 'NeetCode page slug attached');
+  const rows = (await send({ kind: 'exportDrill' })).jsonl.trim().split('\n').map(JSON.parse);
+  assert.ok(rows.every(x => x.kind === 'neetcode' && x.correct === 1 && x.ts < 1));
+});
+
+test('NeetCode sync: a problem also solved on LeetCode keeps its real date', async () => {
+  freshStore();
+  await acThenGrade({ startedAt: Date.now() - 60e3 });
+  await send({ kind: 'neetcodeProgress', slugs: ['two-sum'], account: true });
+  const v = await send({ kind: 'getGoalView', id: null });
+  const p = v.problems.find(x => x.slug === 'two-sum');
+  assert.ok(!p.undated && p.t > 0);
+  const rows = (await send({ kind: 'exportDrill' })).jsonl.trim().split('\n').map(JSON.parse);
+  assert.ok(!rows.some(x => x.kind === 'neetcode'), 'no extra undated attempt when a dated one exists');
+});
+
+test('NeetCode 150 / 250 goal presets', async () => {
+  freshStore();
+  let r = await send({ kind: 'saveGoal', goal: { preset: 'nc150' } });
+  assert.ok(r.ok, r.error);
+  assert.equal(r.goal.target, 150);
+  assert.equal(r.goal.name, 'NeetCode 150');
+  r = await send({ kind: 'saveGoal', goal: { preset: 'nc250', name: 'Summer grind' } });
+  assert.equal(r.goal.target, 250);
+  assert.equal(r.goal.name, 'Summer grind');
 });
 
 let failed = 0;
