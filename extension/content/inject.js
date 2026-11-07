@@ -110,7 +110,10 @@
   //   1. the check URL id must be all digits (run ids are "runcode_…");
   //   2. task_name must not be the RunCode task;
   //   3. run responses carry `code_answer`, submit responses never do.
-  const CHECK_RE  = /\/submissions\/detail\/(\d+)\/check\/?(?:\?|$)/;
+  // LeetCode now polls /submissions/detail/<id>/v2/check/ for submits (the
+  // old path is still used elsewhere); missing v2 left only the slow DOM
+  // fallback, so the rating card took ~10s to appear.
+  const CHECK_RE  = /\/submissions\/detail\/(\d+)\/(?:v2\/)?check\/?(?:\?|$)/;
   const SUBMIT_RE = /\/problems\/([^/?#]+)\/submit\/?(?:\?|$)/;
 
   // submission id -> slug, captured from the submit request itself. The verdict
@@ -122,10 +125,25 @@
   const seenSubmissionIds = new Set();
 
   function isRunResult(json) {
+    // (run checks use "runcode_…" ids, which CHECK_RE never matches anyway)
     if (/runcode/i.test(String(json.task_name || ''))) return true;
-    if (json.code_answer !== undefined) return true;
     if (/^runcode/i.test(String(json.submission_id ?? ''))) return true;
     return false;
+  }
+
+  // v2 responses carry a numeric status_code instead of status_msg. Mapped the
+  // way LeetCode's own client does: 10 is Accepted unless compare_result shows
+  // a failed case.
+  const STATUS_BY_CODE = {
+    10: 'Accepted', 11: 'Wrong Answer', 12: 'Memory Limit Exceeded', 13: 'Output Limit Exceeded',
+    14: 'Time Limit Exceeded', 15: 'Runtime Error', 16: 'Internal Error', 20: 'Compile Error',
+    30: 'Time Limit Exceeded', 40: 'Invalid Testcase', 50: 'Restrictions Failed',
+  };
+  function statusOf(json) {
+    if (json.status_msg || json.statusMsg) return json.status_msg || json.statusMsg;
+    const code = Number(json.status_code);
+    if (code === 10 && String(json.compare_result || '').includes('0')) return 'Wrong Answer';
+    return STATUS_BY_CODE[code] || null;
   }
 
   function noteSubmit(slug, json) {
@@ -138,10 +156,13 @@
   function reportVerdict(json, urlId) {
     try {
       if (!json || typeof json !== 'object') return;
-      // Only final states carry a verdict; PENDING/STARTED mean still judging.
+      // Only final states carry a verdict; PENDING/STARTED/COMPILING/… mean
+      // still judging. v2 adds an AI judge pass (ai_state): not final until
+      // it's done either.
       if (json.state && json.state !== 'SUCCESS') return;
+      if (json.ai_state && json.ai_state !== 'SUCCESS') return;
       if (isRunResult(json)) return;
-      const status = json.status_msg || json.statusMsg;
+      const status = statusOf(json);
       if (!status) return;
 
       const id = String(json.submission_id ?? json.submissionId ?? urlId ?? '');
@@ -190,7 +211,8 @@
       const p = origFetch.apply(this, args);
       try {
         const input = args[0];
-        const url = String(typeof input === 'string' ? input : (input && input.url) || '');
+        // a string, a Request, or a URL object
+        const url = typeof input === 'string' ? input : String((input && input.url) || input || '');
         if (interesting(url)) {
           p.then((res) => {
             try { res.clone().json().then((j) => routeResponse(url, j)).catch(() => {}); } catch (e) {}

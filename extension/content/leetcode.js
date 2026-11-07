@@ -413,9 +413,11 @@
   // the old olive/yellow/pink), and after a submit the description panel can
   // be gone entirely; then the background's catalog answers instead.
   function pageDifficulty() {
+    // Only the problem's own badge: the "similar questions" list on the same
+    // page marks ITS difficulties with text-olive/text-yellow, which would
+    // otherwise be picked up when the description isn't showing.
     const els = document.querySelectorAll(
-      '[class*="text-difficulty-"], [class*="text-sd-easy"], [class*="text-sd-medium"], [class*="text-sd-hard"], '
-      + '[diff], [class*="difficulty"], .text-olive, .text-yellow, .text-pink');
+      '[class*="text-difficulty-"], [class*="text-sd-easy"], [class*="text-sd-medium"], [class*="text-sd-hard"]');
     for (const el of els) {
       const m = (el.textContent || '').trim().match(/^(Easy|Medium|Hard)$/i);
       if (m) return m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
