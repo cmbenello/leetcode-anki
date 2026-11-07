@@ -252,6 +252,18 @@ test('NeetCode sync: a problem also solved on LeetCode keeps its real date', asy
   assert.ok(!rows.some(x => x.kind === 'neetcode'), 'no extra undated attempt when a dated one exists');
 });
 
+test('getHome: goals and the active goal\'s view in one answer', async () => {
+  freshStore();
+  await acThenGrade({ startedAt: Date.now() - 60e3 });
+  const g = await send({ kind: 'saveGoal', goal: { name: 'Arrays', type: 'tags', tags: ['array'], target: 10 } });
+  const h = await send({ kind: 'getHome' });
+  assert.ok(h.ok && h.goals.ok && h.view.ok);
+  assert.equal(h.goals.activeId, g.goal.id);
+  assert.equal(h.view.goal.id, g.goal.id, 'the view is for the active goal');
+  assert.ok(h.view.problems.some(p => p.slug === 'two-sum'));
+  assert.ok(Array.isArray(h.view.phases));
+});
+
 // ---- prep phases ----
 const solvedOn = (slug, d, id) => ({ slug, title: slug, site: 'leetcode', reps: 1, lapses: 0, due: Date.now() + 864e5,
   history: [{ t: d.getTime(), q: 4 }], submissions: [{ t: d.getTime(), status: 'Accepted', id }] });

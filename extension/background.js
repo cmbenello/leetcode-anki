@@ -139,6 +139,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: true });
           break;
         }
+        case 'getHome': {
+          sendResponse(await getHome());
+          break;
+        }
         case 'getGoalView': {
           sendResponse(await getGoalView(msg.id));
           break;
@@ -1175,6 +1179,13 @@ async function savePhases(list) {
   const meta = (await chrome.storage.local.get(PHASES_META))[PHASES_META] || {};
   await chrome.storage.local.set({ [PHASES_META]: { ...meta, edited: true } });
   return { ok: true, phases: r.phases };
+}
+
+/** Everything the new-tab graph needs, in one round trip: goals + the active goal's view. */
+async function getHome() {
+  const goals = await getGoalsWithProgress();
+  const view = await getGoalView(goals.activeId);
+  return { ok: !!view?.ok, goals, view };
 }
 
 /** Problems for the radial growth view, oldest first, each tagged with its phase. */

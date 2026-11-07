@@ -328,20 +328,53 @@ const humanTag = (t) => ({
   'breadth-first-search': 'BFS', 'depth-first-search': 'DFS',
 }[t] || t.replace(/-/g, ' '));
 
+// The graph must be there the moment a tab opens. Waking the background
+// worker and reading storage takes 100ms+ (more with a big history), so the
+// last answer is kept in localStorage and drawn straight away; the fresh one
+// replaces it only if something actually changed.
+const HOME_CACHE = 'lcanki.home';
+const viewKey = (v) => JSON.stringify({ ...v, now: 0 });     // the clock alone isn't a change
+let shownKey = null;
+function writeHomeCache(home) {
+  try { localStorage.setItem(HOME_CACHE, JSON.stringify(home)); } catch (e) { /* full or blocked: just slower next time */ }
+}
+(function paintCached() {
+  let c = null;
+  try { c = JSON.parse(localStorage.getItem(HOME_CACHE) || 'null'); } catch (e) { return; }
+  if (!c?.goals?.ok || !c?.view?.ok) return;
+  goalState = c.goals;
+  renderPills();
+  c.view.now = Date.now();                  // "recent" / "today" relative to now
+  growth.update(c.view);
+  shownKey = viewKey(c.view);
+})();
+
 // Refreshes can overlap (a pill click and a tab-focus reload); only the
-// newest one may draw, or the grow-in animation restarts mid-way.
+// newest one may draw.
 let goalsSeq = 0;
 async function loadGoals() {
   const my = ++goalsSeq;
-  const r = await send('getGoals');
+  let home = await send('getHome');
   if (my !== goalsSeq) return;
-  if (r?.ok) { goalState = r; renderPills(); }
-  else showBanner(`Couldn’t load goals: ${r?.error}`);
-  loadNext(my);                                      // ranking never waits on the goal view
-  const view = await send('getGoalView', { id: r?.ok ? r.activeId : null });
-  if (my !== goalsSeq) return;
-  if (view?.ok) growth.update(view);
-  else growth.fail(view?.error || 'no answer from the extension');
+  if (!home?.ok && /unknown kind/i.test(home?.error || '')) {
+    // a worker from before getHome existed: the old two requests
+    const r = await send('getGoals');
+    const view = r?.ok ? await send('getGoalView', { id: r.activeId }) : null;
+    home = { ok: !!view?.ok, goals: r, view, error: view?.error || r?.error };
+    if (my !== goalsSeq) return;
+  }
+  if (home?.goals?.ok) { goalState = home.goals; renderPills(); }
+  else showBanner(`Couldn’t load goals: ${home?.goals?.error || home?.error}`);
+  loadNext(my);
+  if (home?.view?.ok) {
+    const key = viewKey(home.view);
+    if (key !== shownKey) { growth.update(home.view); shownKey = key; }
+    writeHomeCache({ goals: home.goals, view: home.view });
+  } else if (shownKey == null) {
+    growth.fail(home?.view?.error || home?.error || 'no answer from the extension');
+  } else {
+    showBanner(`Couldn’t refresh the graph: ${home?.view?.error || home?.error || 'no answer'}`);
+  }
 }
 
 function renderPills() {
