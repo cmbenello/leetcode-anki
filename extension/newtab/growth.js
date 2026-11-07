@@ -46,6 +46,16 @@ const LABEL = {
 };
 const topicLabel = (t) => LABEL[t] || String(t).replace(/-/g, ' ');
 
+// Each topic gets its own soft hue (no yellows). Neighbouring topics on the
+// circle get well-separated hues, so regions read apart at a glance.
+const TOPIC_HUE = {
+  'array': 212, 'hash-table': 170, 'string': 268, 'two-pointers': 18, 'sliding-window': 192,
+  'stack': 330, 'binary-search': 145, 'linked-list': 240, 'tree': 125, 'trie': 300,
+  'graph': 200, 'heap': 352, 'backtracking': 284, 'dynamic-programming': 158,
+  'greedy': 28, 'bit-manipulation': 228, 'math': 185, 'other': 220,
+};
+const hsla = (h, l, a) => `hsla(${h}, 46%, ${l}%, ${a.toFixed(3)})`;
+
 export function primaryTopic(tags = []) {
   const norm = new Set(tags.map(t => ALIAS[t] || t));
   for (const t of PRIORITY) if (norm.has(t)) return t;
@@ -98,9 +108,15 @@ export function layout(problems, { size, width = size, height = size, target, no
   const usable = TAU - gap * present.length;
   const sectors = {};
   let a = -Math.PI / 2;
+  // A topic lights up with how much you've done there: intensity runs from
+  // dim (a couple of problems) to full (your biggest topic), on a √ scale so
+  // small topics stay visible.
+  const maxCount = Math.max(1, ...present.map(t => counts[t]));
   present.forEach((t, i) => {
     const span = usable * (weights[i] / wsum);
-    sectors[t] = { topic: t, start: a, span, mid: a + span / 2, count: counts[t], nodes: [] };
+    const intensity = 0.3 + 0.7 * Math.sqrt(counts[t] / maxCount);
+    sectors[t] = { topic: t, start: a, span, mid: a + span / 2, count: counts[t], nodes: [],
+                   hue: TOPIC_HUE[t] ?? 220, intensity };
     a += span + gap;
   });
 
@@ -134,7 +150,8 @@ export function layout(problems, { size, width = size, height = size, target, no
       ...p, k, r, ang, x, y, px, py, qx, qy, pr,
       // edge width bucket: thick near the centre, thinner toward the edge
       wb: Math.min(3, Math.floor(Math.max(0, (pr - r0) / (R - r0 || 1)) * 4)),
-      dot: (p.difficulty === 'Hard' ? 5 : p.difficulty === 'Easy' ? 3.4 : 4.2) * Math.sqrt(scale),
+      dot: (p.difficulty === 'Hard' ? 2.8 : p.difficulty === 'Easy' ? 1.9 : 2.35) * Math.sqrt(scale),
+      sec: p._topic,
       tone: p.undated ? 'old' : sameDay ? 'today' : age < 7 * DAY ? 'recent' : age < 60 * DAY ? 'mid' : 'old',
     };
     sec.nodes.push(node);
@@ -145,15 +162,36 @@ export function layout(problems, { size, width = size, height = size, target, no
 
 const EDGE_WIDTH = [2.6, 2.1, 1.7, 1.35];   // per width bucket, before scale
 
-/** Edges batched into one Path2D per width bucket (content coordinates). */
-function buildEdgePaths(nodes) {
-  const paths = EDGE_WIDTH.map(() => new Path2D());
-  for (const nd of nodes) {
-    const p = paths[nd.wb];
+/**
+ * Everything static, batched once per data change (content coordinates):
+ * edges as one Path2D per (topic, width bucket), and each topic's colours.
+ */
+function buildPaint(L) {
+  const bySec = {};
+  for (const sec of L.sectors) {
+    const I = sec.intensity;
+    bySec[sec.topic] = {
+      edges: EDGE_WIDTH.map(() => new Path2D()),
+      edge: hsla(sec.hue, 52 + 18 * I, 0.18 + 0.5 * I),
+      tone: {                                  // recent problems a touch brighter
+        old: hsla(sec.hue, 56 + 16 * I, 0.32 + 0.55 * I),
+        mid: hsla(sec.hue, 60 + 16 * I, 0.38 + 0.56 * I),
+        recent: hsla(sec.hue, 66 + 14 * I, 0.5 + 0.5 * I),
+        today: hsla(sec.hue, 80, 0.95),
+      },
+      label: hsla(sec.hue, 70, 0.35 + 0.55 * I),
+      // a faint tint over the topic's wedge — strongest near the centre,
+      // fading outward — so the region itself reads as lit up
+      washIn: hsla(sec.hue, 55, 0.02 + 0.07 * I),
+      washOut: hsla(sec.hue, 55, 0),
+    };
+  }
+  for (const nd of L.nodes) {
+    const p = bySec[nd.sec].edges[nd.wb];
     p.moveTo(nd.px, nd.py);
     p.quadraticCurveTo(nd.qx, nd.qy, nd.x, nd.y);
   }
-  return paths;
+  return bySec;
 }
 
 /**
@@ -200,7 +238,7 @@ export function mountGrowth(root, { onOpen } = {}) {
     L = view
       ? layout(view.problems.map(p => ({ ...p })), { width: W, height: H, target: view.progress.target, now: view.now })
       : layout([], { width: W, height: H, target: 1 });
-    edges = buildEdgePaths(L.nodes);
+    edges = buildPaint(L);
   }
 
   // The canvas is centred in the stage; the hub sits over the tree's centre
@@ -242,24 +280,47 @@ export function mountGrowth(root, { onOpen } = {}) {
       ctx.restore();
     }
 
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = COLORS.edge;
-    edges.forEach((path, i) => {
-      ctx.lineWidth = EDGE_WIDTH[i] * L.scale / k;
-      ctx.stroke(path);
-    });
-
-    // nodes: one fill per tone
-    for (const tone of TONES) {
+    // region washes first, underneath everything
+    for (const sec of L.sectors) {
+      const g = ctx.createRadialGradient(cx, cy, L.r0, cx, cy, R);
+      g.addColorStop(0, edges[sec.topic].washIn);
+      g.addColorStop(1, edges[sec.topic].washOut);
       ctx.beginPath();
-      for (const nd of L.nodes) {
-        if (nd.tone !== tone) continue;
-        const r = nd.dot / k;
-        ctx.moveTo(nd.x + r, nd.y);
-        ctx.arc(nd.x, nd.y, r, 0, TAU);
-      }
-      ctx.fillStyle = COLORS[tone];
+      ctx.moveTo(cx + Math.cos(sec.start) * L.r0, cy + Math.sin(sec.start) * L.r0);
+      ctx.arc(cx, cy, R, sec.start, sec.start + sec.span);
+      ctx.arc(cx, cy, L.r0, sec.start + sec.span, sec.start, true);
+      ctx.closePath();
+      ctx.fillStyle = g;
       ctx.fill();
+    }
+
+    ctx.lineCap = 'round';
+    for (const sec of L.sectors) {
+      const paint = edges[sec.topic];
+      ctx.strokeStyle = paint.edge;
+      paint.edges.forEach((path, i) => {
+        ctx.lineWidth = EDGE_WIDTH[i] * L.scale / k;
+        ctx.stroke(path);
+      });
+    }
+
+    // nodes: one fill per (topic, tone)
+    for (const sec of L.sectors) {
+      const paint = edges[sec.topic];
+      for (const tone of TONES) {
+        let any = false;
+        ctx.beginPath();
+        for (const nd of sec.nodes) {
+          if (nd.tone !== tone) continue;
+          const r = nd.dot / k;
+          ctx.moveTo(nd.x + r, nd.y);
+          ctx.arc(nd.x, nd.y, r, 0, TAU);
+          any = true;
+        }
+        if (!any) continue;
+        ctx.fillStyle = paint.tone[tone];
+        ctx.fill();
+      }
     }
 
     if (hover) {
@@ -270,17 +331,17 @@ export function mountGrowth(root, { onOpen } = {}) {
       ctx.lineWidth = EDGE_WIDTH[hover.wb] * L.scale * 1.3 / k;
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(hover.x, hover.y, hover.dot * 1.6 / k, 0, TAU);
+      ctx.arc(hover.x, hover.y, hover.dot * 1.8 / k, 0, TAU);
       ctx.fillStyle = COLORS.hi;
       ctx.fill();
     }
 
     // topic labels just outside the ring, kept a constant size while zoomed
     ctx.font = `${12.5 / s}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-    ctx.fillStyle = COLORS.label;
     ctx.textBaseline = 'middle';
     for (const sec of L.sectors) {
       if (sec.span < 0.2) continue;
+      ctx.fillStyle = edges[sec.topic].label;
       const lx = cx + Math.cos(sec.mid) * (R + 24), ly = cy + Math.sin(sec.mid) * (R + 24);
       ctx.textAlign = Math.abs(Math.cos(sec.mid)) < 0.3 ? 'center' : Math.cos(sec.mid) > 0 ? 'left' : 'right';
       ctx.fillText(`${topicLabel(sec.topic)} ${sec.count}`, lx, ly);
