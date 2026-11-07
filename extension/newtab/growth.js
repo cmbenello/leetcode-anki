@@ -46,19 +46,22 @@ export function primaryTopic(tags = []) {
   return 'other';
 }
 
-const COLORS = {
-  stem: 'rgba(170, 186, 160, 0.26)',
-  stemHi: 'rgba(214, 222, 200, 0.55)',
-  old: '#5d7562',
-  mid: '#7f9a7c',
-  recent: '#a9bf9c',
-  today: '#e7dcbc',
-  due: 'rgba(207, 159, 88, 0.75)',
-  leaflet: 'rgba(120, 146, 118, 0.55)',
-  ring: 'rgba(236, 228, 206, 0.13)',
-  ringFaint: 'rgba(236, 228, 206, 0.05)',
-  label: 'rgba(214, 214, 200, 0.42)',
+// Colours come from the page's theme tokens (newtab.css), so switching theme
+// recolours the canvas too. Fallbacks keep the module usable on its own.
+const TOKENS = {
+  stem: ['--stem', 'rgba(150,178,200,0.24)'], stemHi: ['--stem-hi', 'rgba(205,225,240,0.6)'],
+  old: ['--leaf-old', '#3e6177'], mid: ['--leaf-mid', '#5d89a5'], recent: ['--leaf-recent', '#8ebcd8'],
+  today: ['--leaf-today', '#dcf0fb'], due: ['--due', 'rgba(224,128,112,0.85)'],
+  leaflet: ['--leaflet', 'rgba(98,136,160,0.55)'], ring: ['--ring', 'rgba(200,225,245,0.14)'],
+  ringFaint: ['--ring-faint', 'rgba(200,225,245,0.05)'], label: ['--label', 'rgba(190,210,228,0.45)'],
 };
+let COLORS = {};
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  COLORS = {};
+  for (const [k, [v, fb]] of Object.entries(TOKENS)) COLORS[k] = cs.getPropertyValue(v).trim() || fb;
+}
+readColors();
 
 function hash01(str) {
   let h = 2166136261;
@@ -68,10 +71,12 @@ function hash01(str) {
 const DAY = 86400000;
 
 /** Pure layout: problems -> positioned nodes + sectors. Exported for tests. */
-export function layout(problems, { size, target, now = Date.now() }) {
-  const cx = size / 2, cy = size / 2;
-  const R = size / 2 - 46;             // leave room for topic labels
-  const r0 = 64;                       // hub radius + breathing room
+export function layout(problems, { size, width = size, height = size, target, now = Date.now() }) {
+  // The canvas is wider than the circle so topic labels on the left and right
+  // never get clipped ("binary search 29" needs ~100px beyond the ring).
+  const cx = width / 2, cy = height / 2;
+  const R = height / 2 - 46;           // leave room above/below for labels
+  const r0 = Math.max(64, height * 0.12);   // hub radius + breathing room
   const n = problems.length;
   const T = Math.max(target || 1, n, 1);
 
@@ -95,6 +100,7 @@ export function layout(problems, { size, target, now = Date.now() }) {
   });
 
   const nodes = [];
+  const leafScale = Math.max(1, Math.min(1.6, R / 254));   // 254 = R of the old 600px canvas
   problems.forEach((p, k) => {
     const sec = sectors[p._topic];
     const r = r0 + (R - r0) * Math.sqrt((k + 1) / T);
@@ -115,7 +121,7 @@ export function layout(problems, { size, target, now = Date.now() }) {
       px: parent ? parent.x : cx + Math.cos(ang) * (r0 - 10),
       py: parent ? parent.y : cy + Math.sin(ang) * (r0 - 10),
       pr: parent ? parent.r : r0 - 10,
-      size: p.difficulty === 'Hard' ? 10 : p.difficulty === 'Easy' ? 6 : 8,
+      size: (p.difficulty === 'Hard' ? 10 : p.difficulty === 'Easy' ? 6 : 8) * leafScale,
       tone: age < DAY && new Date(p.t).toDateString() === new Date(now).toDateString() ? 'today'
           : age < 7 * DAY ? 'recent' : age < 60 * DAY ? 'mid' : 'old',
       isDue: p.due != null && p.due <= now,
@@ -123,7 +129,7 @@ export function layout(problems, { size, target, now = Date.now() }) {
     sec.nodes.push(node);
     nodes.push(node);
   });
-  return { cx, cy, R, r0, T, n, nodes, sectors: Object.values(sectors) };
+  return { cx, cy, R, r0, T, n, nodes, leafScale, sectors: Object.values(sectors) };
 }
 
 function drawLeaf(ctx, x, y, ang, len, color, glow) {
@@ -150,7 +156,7 @@ export function mountGrowth(root, { onOpen } = {}) {
       <canvas class="growth-canvas"></canvas>
       <div class="growth-hub">
         <div class="growth-goal"></div>
-        <div class="growth-count"><span class="growth-done">0</span><span class="growth-target"></span></div>
+        <div class="growth-count"><span class="growth-done">…</span><span class="growth-target"></span></div>
         <div class="growth-pace"></div>
       </div>
       <div class="growth-tip" hidden></div>
@@ -159,21 +165,26 @@ export function mountGrowth(root, { onOpen } = {}) {
   const canvas = root.querySelector('.growth-canvas');
   const tip = root.querySelector('.growth-tip');
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let L = null, view = null, raf = 0, hover = null, shown = 0, size = 0;
+  let L = null, view = null, raf = 0, hover = null, shown = 0, W = 0, H = 0;
 
   function resize() {
-    size = Math.min(stage.clientWidth || 560, 600);
+    // As large as the page allows: full content width, and as tall as ~3/4 of
+    // the window (clamped), so the growth is the centrepiece.
+    W = Math.min(stage.clientWidth || 900, 1100);
+    H = Math.round(Math.min(W * 0.82, Math.max(560, innerHeight * 0.76), 860));
     const dpr = Math.min(2, devicePixelRatio || 1);
-    canvas.width = Math.round(size * dpr);
-    canvas.height = Math.round(size * dpr);
-    canvas.style.width = canvas.style.height = `${size}px`;
-    stage.style.height = `${size}px`;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    canvas.style.width = `${W}px`;
+    canvas.style.height = `${H}px`;
+    stage.style.height = `${H}px`;
     canvas.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
   }
+  const doLayout = (v) => layout(v.problems.map(p => ({ ...p })), { width: W, height: H, target: v.progress.target, now: v.now });
 
   function draw(upto) {
     const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, size, size);
+    ctx.clearRect(0, 0, W, H);
     if (!L) return;
     const { cx, cy, R, r0, T, n } = L;
 
@@ -211,7 +222,7 @@ export function mountGrowth(root, { onOpen } = {}) {
       ctx.stroke();
 
       const len = Math.hypot(nd.x - nd.px, nd.y - nd.py);
-      const steps = Math.floor(len / 13);
+      const steps = Math.floor(len / (13 * L.leafScale));
       for (let i = 1; i < steps; i++) {
         const t = i / steps, u = 1 - t;
         const x = u * u * nd.px + 2 * u * t * qx + t * t * nd.x;
@@ -219,7 +230,7 @@ export function mountGrowth(root, { onOpen } = {}) {
         const dx = 2 * u * (qx - nd.px) + 2 * t * (nd.x - qx);
         const dy = 2 * u * (qy - nd.py) + 2 * t * (nd.y - qy);
         const side = (i + nd.k) % 2 ? 1 : -1;
-        drawLeaf(ctx, x, y, Math.atan2(dy, dx) + side * 0.95, 3.2 + 1.6 * t, COLORS.leaflet, false);
+        drawLeaf(ctx, x, y, Math.atan2(dy, dx) + side * 0.95, (3.2 + 1.6 * t) * L.leafScale, COLORS.leaflet, false);
       }
     }
     for (const nd of vis) {
@@ -306,7 +317,7 @@ export function mountGrowth(root, { onOpen } = {}) {
     tip.append(b, meta, line);
     tip.hidden = false;
     const x = nd.x + 14, y = nd.y - 10;
-    tip.style.left = `${Math.min(x, size - 220)}px`;
+    tip.style.left = `${Math.min(x, W - 220)}px`;
     tip.style.top = `${Math.max(0, y)}px`;
   });
   canvas.addEventListener('mouseleave', () => { hover = null; tip.hidden = true; draw(shown); });
@@ -315,15 +326,29 @@ export function mountGrowth(root, { onOpen } = {}) {
   let rt = 0;
   addEventListener('resize', () => {
     clearTimeout(rt);
-    rt = setTimeout(() => { if (!view) return; resize(); L = layout(view.problems, { size, target: view.progress.target, now: view.now }); shown = L.nodes.length; draw(shown); }, 120);
+    rt = setTimeout(() => { if (!view) return; resize(); L = doLayout(view); shown = L.nodes.length; draw(shown); }, 120);
   });
 
+  // Size the canvas and draw the empty rings right away, so a slow or failed
+  // load never leaves the browser's default 300×150 canvas on screen.
+  resize();
+  L = layout([], { width: W, height: H, target: 1 });
+  draw(0);
+
   return {
+    /** Show a load failure in the hub instead of a misleading "0". */
+    fail(msg) {
+      root.querySelector('.growth-done').textContent = '—';
+      root.querySelector('.growth-pace').textContent = `couldn’t load: ${msg}`;
+    },
+    /** Re-read theme colours and redraw in place. */
+    retheme() { readColors(); if (L) draw(shown); },
     update(v) {
       const same = view && v.goal?.id === view.goal?.id && v.problems.length === view.problems.length;
       view = v;
+      readColors();
       resize();
-      L = layout(v.problems.map(p => ({ ...p })), { size, target: v.progress.target, now: v.now });
+      L = doLayout(v);
       setHub();
       if (same) { shown = L.nodes.length; draw(shown); } else animate();
     },

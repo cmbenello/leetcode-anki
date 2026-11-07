@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>New Tab</title>
+  <script src="theme-init.js"></script>
   <link rel="stylesheet" href="newtab.css" />
 </head>
 <body>
@@ -17,12 +18,22 @@
           <button id="start-session" class="primary">Start session</button>
           <button id="end-session-home" class="end-btn hidden">End</button>
         </div>
+        <div id="theme-dots" class="theme-dots" role="radiogroup" aria-label="Colour scheme">
+          <button class="theme-dot" data-theme="glass" title="Glass" aria-label="Glass theme"></button>
+          <button class="theme-dot" data-theme="ocean" title="Ocean" aria-label="Ocean theme"></button>
+          <button class="theme-dot" data-theme="dusk" title="Dusk" aria-label="Dusk theme"></button>
+          <button class="theme-dot" data-theme="graphite" title="Graphite" aria-label="Graphite theme"></button>
+        </div>
         <a id="open-options" href="#" title="Settings">⚙</a>
       </div>
     </header>
 
     <section class="goals">
       <div id="goal-pills" class="goal-pills"></div>
+      <div id="import-cta" class="import-cta" hidden>
+        <button id="import-btn" type="button" class="pill pill-import">↓ Grow it from your LeetCode history</button>
+        <span id="import-msg" class="import-msg"></span>
+      </div>
 
       <form id="goal-form" class="goal-form" hidden autocomplete="off">
         <input id="goal-name" class="goal-name" placeholder="Prepare for Google interview" maxlength="60" required />
@@ -51,6 +62,29 @@
       <div id="growth" class="growth"></div>
     </section>
 
+    <section class="card heat-card">
+      <div class="card-head">
+        <h2>Daily activity</h2>
+        <span id="heatmap-summary" class="sub"></span>
+      </div>
+      <div class="heatmap-wrap">
+        <div id="heatmap-months"></div>
+        <div class="heatmap-body">
+          <div id="heatmap-days"></div>
+          <div id="heatmap"></div>
+        </div>
+      </div>
+      <div class="heatmap-legend">
+        <span>Less</span>
+        <div class="hm-cell" data-level="0"></div>
+        <div class="hm-cell" data-level="1"></div>
+        <div class="hm-cell" data-level="2"></div>
+        <div class="hm-cell" data-level="3"></div>
+        <div class="hm-cell" data-level="4"></div>
+        <span>More</span>
+      </div>
+    </section>
+
     <section class="stats-row">
       <div class="stat"><div class="num" id="stat-due">0</div><div class="label">due</div></div>
       <div class="stat"><div class="num" id="stat-streak">0</div><div class="label">day streak</div></div>
@@ -65,8 +99,19 @@
         <h2>Next up</h2>
         <span id="next-sub" class="sub"></span>
       </div>
-      <ul id="next-list" class="list"><li class="empty">Thinking…</li></ul>
+      <ul id="next-list" class="list"><li class="empty">Ranking problems…</li></ul>
       <p id="next-foot" class="next-foot"></p>
+      <details class="how">
+        <summary>How it picks</summary>
+        <p>
+          It scores every free LeetCode problem you haven’t solved (about 3,300) by the chance you’d solve
+          it without help, and aims for about 75%: hard enough to learn from, easy enough to finish. It
+          estimates your skill per topic from every attempt, counting peeks at the editorial as misses.
+          It favours your weakest topics, and an hour to a week after a miss it brings back a similar
+          problem you’re likely to pass. With a goal selected, it stays on that goal. Ranking takes a
+          few milliseconds. The model is ported from Drill.
+        </p>
+      </details>
     </section>
 
     <section class="card">

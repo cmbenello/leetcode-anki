@@ -172,6 +172,42 @@ $('#export-drill').addEventListener('click', async () => {
   setStatus($('#drill-status'), `${n} attempts exported`, 'ok');
 });
 
+// ---------- LeetCode history import ----------
+let importPoll = 0;
+function renderImport(st) {
+  const el = $('#import-status');
+  const running = !!st?.running;
+  $('#import-lc').disabled = running;
+  $('#import-cancel').hidden = !running;
+  if (!st) { setStatus(el, ''); return; }
+  if (running) {
+    setStatus(el, `importing… ${st.pages} page${st.pages === 1 ? '' : 's'} · ${st.added} submissions · ${st.newCards} new problems`);
+  } else if (st.error) {
+    setStatus(el, st.error, 'err');
+  } else if (st.finishedAt) {
+    const when = new Date(st.finishedAt).toLocaleString();
+    setStatus(el, `done ${when}: ${st.added} submissions, ${st.newCards} new problems` +
+      (st.scheduled ? `, ${st.scheduled} added to reviews at ${st.perDay}/day` : ''), 'ok');
+  }
+  clearTimeout(importPoll);
+  if (running) importPoll = setTimeout(refreshImport, 1000);
+}
+async function refreshImport() {
+  const r = await send('getImportState');
+  renderImport(r?.state);
+}
+$('#import-lc').addEventListener('click', async () => {
+  setStatus($('#import-status'), 'starting…');
+  const r = await send('startImport', { perDay: +$('#import-per-day').value || 5 });
+  if (!r?.ok) setStatus($('#import-status'), r?.error || 'could not start', 'err');
+  refreshImport();
+});
+$('#import-cancel').addEventListener('click', async () => {
+  await send('cancelImport');
+  refreshImport();
+});
+refreshImport();
+
 $('#import').addEventListener('click', () => $('#import-file').click());
 $('#import-file').addEventListener('change', async (ev) => {
   const file = ev.target.files?.[0];

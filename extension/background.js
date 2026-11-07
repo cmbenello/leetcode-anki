@@ -14,6 +14,7 @@ import { makeGoal, goalMatches, goalProgress, PRESETS, INTERVIEW_TAGS, parseSlug
 import { commitWithRetry } from './lib/github.js';
 import { dayKeyMs, todayKey, lastNDayKeys } from './lib/dates.js';
 import { fetchQuestionMeta, fetchCatalog } from './lib/leetcode-api.js';
+import { sanitizeCards } from './lib/cards.js';
 
 const LANG_EXT = {
   python: 'py', python3: 'py',
@@ -142,6 +143,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         case 'getRecommendations': {
           sendResponse(await getRecommendations(msg.id, msg.k));
+          break;
+        }
+        case 'startImport': {
+          sendResponse(await startImport(msg.perDay));
+          break;
+        }
+        case 'importBatch': {
+          sendResponse(await importBatch(msg.submissions || [], msg.cursor || {}));
+          break;
+        }
+        case 'importProgress': {
+          sendResponse(await importProgress(msg));
+          break;
+        }
+        case 'getImportState': {
+          sendResponse({ ok: true, state: await getImportState() });
+          break;
+        }
+        case 'cancelImport': {
+          await setImportState({ ...(await getImportState()), running: false, cancelled: true });
+          sendResponse({ ok: true });
           break;
         }
         case 'exportDrill': {
@@ -692,6 +714,22 @@ function renderMetaJson(card, meta, url) {
 
 const tagSlugs = (meta) => (meta?.tags || []).map(t => t.slug);
 
+// Per-problem metadata comes from a GraphQL lookup when you open a problem.
+// Imported history covers hundreds of problems you haven't reopened, so fall
+// back to the catalog (same source, one bulk download) for topics,
+// difficulty and title — otherwise they'd land in the jungle as "other".
+function metaWithCatalog(metaAll, cat) {
+  const out = { ...metaAll };
+  for (const slug of Object.keys(cat.bySlug)) {
+    if (out[slug]?.tags?.length) continue;
+    const c = cat.bySlug[slug];
+    out[slug] = { ...(out[slug] || {}), title: out[slug]?.title || c.title, slug,
+                  difficulty: out[slug]?.difficulty || c.difficulty, acRate: out[slug]?.acRate ?? c.acRate,
+                  tags: (c.tags || []).map(t => ({ slug: t, name: t })), fromCatalog: true };
+  }
+  return out;
+}
+
 // A graded history entry is a SOLVE for the model only if it really was one:
 // not graded Again, not after peeking at the editorial/solutions, and not
 // attached to a failing verdict.
@@ -713,6 +751,7 @@ const SESSION_GAP_MS = 3 * 3600e3;
 function cardsToAttempts(cards, metaAll) {
   const out = [];
   for (const c of Object.values(cards)) {
+    if (!c?.slug) continue;
     const tags = tagSlugs(metaAll[c.slug]);
     const hist = c.history ?? [];
     for (const h of hist) {
@@ -758,17 +797,48 @@ async function catalogIndex() {
 
 const CATALOG_MAX_AGE = 7 * 24 * 3600e3;
 let catalogFetching = null;
+let catalogStatus = { refreshing: false, done: 0, total: 0, error: null };
+
+// The extension ships a snapshot (data/catalog.json, refreshed with
+// scripts/update-catalog.mjs) so recommendations work the moment it's
+// installed. Before this, the first new tab sat on "Thinking…" for ~30s
+// while 42 catalog pages downloaded one after another.
+async function loadBundledCatalog() {
+  try {
+    const res = await fetch(chrome.runtime.getURL('data/catalog.json'));
+    const snap = await res.json();
+    if (Array.isArray(snap?.rows) && snap.rows.length > 1000) {
+      await chrome.storage.local.set({ catalog: { fetchedAt: snap.fetchedAt || 0, rows: snap.rows, bundled: true } });
+      return true;
+    }
+  } catch (e) {
+    console.warn('[lcanki] bundled catalog unavailable:', e?.message || e);
+  }
+  return false;
+}
+
+async function haveCatalog() {
+  if (await getCatalog()) return true;
+  return loadBundledCatalog();
+}
+
 function ensureCatalog({ force = false } = {}) {
   if (catalogFetching) return catalogFetching;
   catalogFetching = (async () => {
     try {
+      await haveCatalog();
       const cat = await getCatalog();
       if (!force && cat && Date.now() - cat.fetchedAt < CATALOG_MAX_AGE) return;
-      const rows = await fetchCatalog();
+      catalogStatus = { refreshing: true, done: 0, total: 0, error: null };
+      const rows = await fetchCatalog({
+        onProgress: (done, total) => { catalogStatus.done = done; catalogStatus.total = total; },
+      });
       if (rows.length > 1000) await setCatalog(rows);   // never replace a good catalog with a partial one
     } catch (e) {
-      console.warn('[lcanki] catalog refresh failed:', e?.message || e);
+      catalogStatus.error = e?.message || String(e);
+      console.warn('[lcanki] catalog refresh failed (keeping the current list):', catalogStatus.error);
     } finally {
+      catalogStatus.refreshing = false;
       catalogFetching = null;
     }
   })();
@@ -777,9 +847,12 @@ function ensureCatalog({ force = false } = {}) {
 
 /** Everything the model needs, built from local data. */
 async function learnerState({ keep = null } = {}) {
-  const [cards, metaAll, cat] = [await getCards(), await getAllMeta(), await catalogIndex()];
+  await haveCatalog();
+  const cat = await catalogIndex();
+  const [cards, metaAll] = [await getCards(), metaWithCatalog(await getAllMeta(), cat)];
   const known = {};
   for (const [slug, m] of Object.entries(metaAll)) {
+    if (m.fromCatalog && !cards[slug]) continue;     // only problems you've touched
     known[slug] = {
       slug, title: m.title || cards[slug]?.title || slug, difficulty: m.difficulty,
       acRate: m.acRate ?? cat.bySlug[slug]?.acRate ?? null, tags: tagSlugs(m), similar: m.similar || [],
@@ -796,14 +869,16 @@ function firstSolvedAt(c) {
     ...(c.history ?? []).filter(h => attemptCorrect(h)).map(h => h.t),
     ...(c.submissions ?? []).filter(x => /accepted/i.test(x.status)).map(x => x.t),
   ];
-  if (ts.length) return Math.min(...ts);
-  return (c.reps ?? 0) > 0 ? (c.history?.[0]?.t ?? null) : null;
+  const ok = ts.filter(Number.isFinite);
+  if (ok.length) return Math.min(...ok);
+  const h0 = c.history?.[0]?.t;
+  return (c.reps ?? 0) > 0 && Number.isFinite(h0) ? h0 : null;
 }
 
 function solvedProblems(cards, metaAll) {
   const out = [];
   for (const c of Object.values(cards)) {
-    if (!isSolved(c)) continue;
+    if (!c?.slug || !isSolved(c)) continue;
     const m = metaAll[c.slug];
     out.push({
       slug: c.slug, title: c.title || c.slug, site: c.site || 'leetcode',
@@ -818,8 +893,13 @@ function solvedProblems(cards, metaAll) {
 }
 
 // ---------- goals ----------
+async function richMeta() {
+  await haveCatalog();
+  return metaWithCatalog(await getAllMeta(), await catalogIndex());
+}
+
 async function getGoalsWithProgress() {
-  const [goals, activeId, cards, metaAll] = [await getGoals(), await getActiveGoalId(), await getCards(), await getAllMeta()];
+  const [goals, activeId, cards, metaAll] = [await getGoals(), await getActiveGoalId(), await getCards(), await richMeta()];
   const solved = solvedProblems(cards, metaAll);
   return {
     ok: true,
@@ -859,7 +939,7 @@ async function goalById(id) {
 
 /** Problems for the radial growth view, oldest first. */
 async function getGoalView(id) {
-  const [cards, metaAll] = [await getCards(), await getAllMeta()];
+  const [cards, metaAll] = [await getCards(), await richMeta()];
   const goal = id ? await goalById(id) : null;
   const all = solvedProblems(cards, metaAll);
   const problems = goal ? all.filter(p => goalMatches(goal, p.slug, p.tags)) : all;
@@ -891,8 +971,141 @@ async function getRecommendations(id, k = 5) {
     weakest: mastery(st).filter(m => m.confident && (goal?.type !== 'tags' || goal.tags.includes(m.concept))).slice(0, 3),
     calibration: calibration(attempts),
     attempts: attempts.length,
-    catalog: { size: cat.rows.length, fetchedAt: cat.at > 0 ? cat.at : null, loading: !!catalogFetching },
+    catalog: {
+      size: cat.rows.length, fetchedAt: cat.at > 0 ? cat.at : null,
+      refreshing: catalogStatus.refreshing, done: catalogStatus.done, total: catalogStatus.total,
+      error: catalogStatus.error,
+    },
   };
+}
+
+// ---------- LeetCode history import ----------
+// The content script pages through your submissions (newest first) and hands
+// each page here. Everything is merged by submission id — the same id the
+// live verdict detector stores — so imports never double-count, and a re-run
+// stops as soon as it reaches a page it has already seen.
+const IMPORT_KEY = 'importState';
+async function getImportState() { return (await chrome.storage.local.get(IMPORT_KEY))[IMPORT_KEY] || null; }
+async function setImportState(st) { await chrome.storage.local.set({ [IMPORT_KEY]: st }); }
+
+async function startImport(perDay = 5) {
+  const prev = await getImportState();
+  if (prev?.running && Date.now() - (prev.heartbeat || 0) < 60e3) return { ok: false, error: 'an import is already running' };
+  let [tab] = await chrome.tabs.query({ url: ['https://leetcode.com/problems/*'] });
+  let opened = false;
+  if (!tab) {
+    tab = await chrome.tabs.create({ url: 'https://leetcode.com/problems/two-sum/description/', active: false });
+    opened = true;
+  }
+  const st = {
+    running: true, startedAt: Date.now(), heartbeat: Date.now(), tabId: tab.id, opened,
+    perDay: Math.min(50, Math.max(1, +perDay || 5)), pages: 0, added: 0, newCards: 0,
+    completedOnce: !!prev?.completedOnce, error: null, cancelled: false,
+  };
+  await setImportState(st);
+  // The tab may still be loading, or predate an extension reload (no content
+  // script yet): retry, reloading it once if it never answers.
+  for (let i = 0; i < 20; i++) {
+    try {
+      const r = await chrome.tabs.sendMessage(tab.id, { kind: 'lc-import-run', cursor: {} });
+      if (r?.started) return { ok: true, opened };
+    } catch (e) { /* not ready yet */ }
+    if (i === 8) chrome.tabs.reload(tab.id).catch(() => {});
+    await new Promise(r => setTimeout(r, 750));
+  }
+  await setImportState({ ...st, running: false, error: 'could not reach a LeetCode tab — open any LeetCode problem and try again' });
+  return { ok: false, error: 'could not reach a LeetCode tab' };
+}
+
+/** Pure merge, exported for tests via the message router. */
+function mergeSubmissions(cards, subs) {
+  let added = 0, newCards = 0;
+  const touched = new Set();
+  for (const x of subs) {
+    const slug = x?.titleSlug;
+    if (!slug || x.id == null) continue;
+    const id = String(x.id);
+    let c = cards[slug];
+    if (!c) {
+      c = newCard(slug, x.title || slugTitle(slug), 'leetcode');
+      c.lastUrl = `https://leetcode.com/problems/${slug}/`;
+      c.imported = true;
+      c.due = Number.MAX_SAFE_INTEGER;     // placeholder: scheduled when the import finishes
+      cards[slug] = c;
+      newCards += 1;
+    }
+    c.submissions = c.submissions || [];
+    if (c.submissions.some(s => s.id === id)) continue;
+    const entry = { t: Number(x.timestamp) * 1000, status: x.statusDisplay || 'Unknown', id, source: 'import' };
+    if (x.lang) entry.lang = x.lang;
+    if (x.runtime && x.runtime !== 'N/A') entry.runtime = x.runtime;
+    if (x.memory && x.memory !== 'N/A') entry.memory = x.memory;
+    c.submissions.push(entry);
+    touched.add(slug);
+    added += 1;
+  }
+  for (const slug of touched) cards[slug].submissions.sort((a, b) => a.t - b.t);
+  return { added, newCards };
+}
+
+async function importBatch(subs, cursor) {
+  const st = await getImportState();
+  if (!st?.running || st.cancelled) return { ok: true, stop: true };
+  const cards = await getCards();
+  const { added, newCards } = mergeSubmissions(cards, subs);
+  await setCards(cards);
+  const next = { ...st, pages: st.pages + 1, added: st.added + added, newCards: st.newCards + newCards,
+                 cursor, heartbeat: Date.now() };
+  // Caught up: a whole page we already had, after at least one full import.
+  const caughtUp = added === 0 && st.completedOnce;
+  await setImportState(next);
+  if (caughtUp) { await finishImport(next); return { ok: true, stop: true }; }
+  return { ok: true, stop: false };
+}
+
+async function importProgress(msg) {
+  const st = (await getImportState()) || {};
+  if (msg.finished) { await finishImport(st); return { ok: true }; }
+  const error = msg.error === 'not-logged-in'
+    ? 'LeetCode says you’re not logged in — sign in at leetcode.com in Chrome, then import again'
+    : msg.error;
+  // Whatever arrived before the failure still gets a real schedule, so no
+  // imported problem is left sitting on its placeholder due date.
+  const cards = await getCards();
+  const scheduled = scheduleImported(cards, st.perDay || 5);
+  if (scheduled) await setCards(cards);
+  await setImportState({ ...st, running: false, error });
+  if (st.opened && st.tabId) chrome.tabs.remove(st.tabId).catch(() => {});
+  return { ok: true };
+}
+
+/**
+ * Give imported problems a review schedule that trickles in instead of
+ * dumping hundreds into "due now": `perDay` a day from tomorrow, the problems
+ * you touched longest ago first (most likely forgotten).
+ */
+function scheduleImported(cards, perDay, now = Date.now()) {
+  const pending = Object.values(cards).filter(c => c.imported && c.due === Number.MAX_SAFE_INTEGER);
+  const lastTouch = (c) => (c.submissions?.length ? c.submissions[c.submissions.length - 1].t : 0);
+  pending.sort((a, b) => lastTouch(a) - lastTouch(b));
+  const start = new Date(now);
+  start.setHours(9, 0, 0, 0);
+  start.setDate(start.getDate() + 1);
+  pending.forEach((c, i) => {
+    const d = new Date(start);
+    d.setDate(d.getDate() + Math.floor(i / perDay));
+    c.due = d.getTime() + (i % perDay) * 60e3;
+    c.intervalMin = 0;
+  });
+  return pending.length;
+}
+
+async function finishImport(st) {
+  const cards = await getCards();
+  const scheduled = scheduleImported(cards, st.perDay || 5);
+  await setCards(cards);
+  await setImportState({ ...st, running: false, completedOnce: true, finishedAt: Date.now(), scheduled, error: null });
+  if (st.opened && st.tabId) chrome.tabs.remove(st.tabId).catch(() => {});
 }
 
 // ---------- Drill bridge ----------
@@ -902,7 +1115,7 @@ async function getRecommendations(id, k = 5) {
 // so Drill's analysis (calibration, experiment_report) can run on real
 // LeetCode practice.
 async function drillAttemptsJsonl() {
-  const [metaAll, cat] = [await getAllMeta(), await catalogIndex()];
+  const [metaAll, cat] = [await richMeta(), await catalogIndex()];
   const attempts = cardsToAttempts(await getCards(), metaAll);
   return attempts.map(a => JSON.stringify({
     user: 'leetcode', item: `lc:${a.slug}`, ts: a.ts / 1000, correct: a.correct,
@@ -1738,9 +1951,17 @@ async function cleanSubmissions({ dryRun = false } = {}) {
   return { ok: true, removed, phantomAccepts: flippedAc, cards: touchedCards, titlesFixed, dryRun };
 }
 
-const SCHEMA_VERSION = 2;
+// v3: persist the normalisation that getCards() applies on every read
+// (lib/cards.js), so stored data is clean too.
+const SCHEMA_VERSION = 3;
 async function runMigrations() {
   const v = await getSchemaVersion();
+  if (v < 3) {
+    const raw = (await chrome.storage.local.get('cards')).cards || {};
+    const fixed = sanitizeCards(raw);
+    if (fixed) await setCards(raw);
+    console.log('[lcanki] migration v3: normalised card records', { fixed });
+  }
   if (v < 1) {
     const r = await rebuildStatsFromHistory();
     console.log('[lcanki] migration v1: rebuilt stats with local day keys', r);

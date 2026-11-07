@@ -1,4 +1,4 @@
-import { getCards } from '../lib/storage.js';
+import { getCards, getSettings, setSettings } from '../lib/storage.js';
 import { dayKey, dayKeyMs, computeStreak } from '../lib/dates.js';
 import { mountGrowth } from './growth.js';
 
@@ -9,14 +9,120 @@ const growth = mountGrowth(document.getElementById('growth'), {
 
 const $ = (s) => document.querySelector(s);
 
-function send(kind, payload = {}) {
+// Every call to the background resolves — with { ok: false, error } on
+// failure, a thrown sendMessage (tab outlived an extension reload), or no
+// answer within 20s. A promise that never settles is how one failed request
+// used to freeze the goal view, the count and "Next up" all at once.
+function send(kind, payload = {}, timeoutMs = 20000) {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ kind, ...payload }, (resp) => {
-      if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
-      else resolve(resp);
-    });
+    const timer = setTimeout(() => resolve({ ok: false, error: `no answer to "${kind}" after ${timeoutMs / 1000}s` }), timeoutMs);
+    const done = (v) => { clearTimeout(timer); resolve(v ?? { ok: false, error: `empty answer to "${kind}"` }); };
+    try {
+      chrome.runtime.sendMessage({ kind, ...payload }, (resp) => {
+        if (chrome.runtime.lastError) done({ ok: false, error: chrome.runtime.lastError.message });
+        else done(resp);
+      });
+    } catch (e) {
+      const msg = e?.message || String(e);
+      if (/context invalidated/i.test(msg)) showBanner('The extension was updated — reload this tab.');
+      done({ ok: false, error: msg });
+    }
   });
 }
+
+// Anything unexpected shows up on the page instead of failing silently.
+function showBanner(text) {
+  let el = document.getElementById('page-error');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'page-error';
+    el.className = 'page-error';
+    el.addEventListener('click', () => el.remove());
+    document.body.prepend(el);
+  }
+  el.textContent = `${text}  (click to dismiss)`;
+}
+window.addEventListener('error', (e) => showBanner(`Something broke: ${e.message}`));
+window.addEventListener('unhandledrejection', (e) => showBanner(`Something broke: ${e.reason?.message || e.reason}`));
+async function safely(label, fn) {
+  try { await fn(); } catch (e) { console.error(`[lcanki] ${label}`, e); showBanner(`${label} failed: ${e?.message || e}`); }
+}
+
+// -------------------------------------------------------- daily tracker ----
+// One cell per local day, counting DISTINCT problems you touched — graded,
+// submitted or imported. Streak and "today" read the same map, so the three
+// can never disagree.
+function activityByDay(cards, quantCards = []) {
+  const perDay = {};
+  const add = (t, slug) => {
+    if (!t) return;
+    const k = dayKey(new Date(t));
+    (perDay[k] ??= new Set()).add(slug);
+  };
+  for (const c of Object.values(cards)) {
+    for (const h of c.history ?? []) add(h.t, c.slug);
+    for (const x of c.submissions ?? []) add(x.t, c.slug);
+  }
+  for (const q of quantCards) for (const t of q.reviewTs || []) add(t, `quant:${q.id}`);
+  return Object.fromEntries(Object.entries(perDay).map(([k, set]) => [k, set.size]));
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const DAY_LABELS = ['Mon', '', 'Wed', '', 'Fri', '', ''];
+const heatLevel = (n) => (!n ? 0 : n <= 1 ? 1 : n <= 3 ? 2 : n <= 6 ? 3 : 4);
+
+function renderHeatmap(byDay) {
+  const grid = $('#heatmap'), monthRow = $('#heatmap-months'), dayCol = $('#heatmap-days');
+  grid.textContent = ''; monthRow.textContent = '';
+  dayCol.innerHTML = DAY_LABELS.map(d => `<span>${d || '&nbsp;'}</span>`).join('');
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  // 53 Monday-aligned columns ending with the week that contains today.
+  const cur = new Date(today);
+  cur.setDate(cur.getDate() - 364);
+  cur.setDate(cur.getDate() - ((cur.getDay() + 6) % 7));
+  let total = 0, active = 0, prevMonth = -1;
+  while (cur <= today) {
+    const col = document.createElement('div');
+    col.className = 'hm-col';
+    const label = document.createElement('span');
+    for (let d = 0; d < 7; d++) {
+      const key = dayKey(cur);
+      const n = byDay[key] || 0;
+      const future = cur > today;
+      const cell = document.createElement('div');
+      cell.className = 'hm-cell' + (future ? ' hm-future' : '');
+      cell.dataset.level = String(heatLevel(n));
+      cell.title = `${key} — ${n} problem${n === 1 ? '' : 's'}`;
+      col.appendChild(cell);
+      if (!future) { total += n; if (n) active += 1; }
+      if (cur.getDate() <= 7 && cur.getMonth() !== prevMonth && !label.textContent) {
+        label.textContent = MONTHS[cur.getMonth()];
+        prevMonth = cur.getMonth();
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    monthRow.appendChild(label);
+    grid.appendChild(col);
+  }
+  $('#heatmap-summary').textContent = `${active} active day${active === 1 ? '' : 's'} in the last year`;
+}
+
+// ---------------------------------------------------------------- theme ----
+const THEMES = ['glass', 'ocean', 'dusk', 'graphite'];
+function applyTheme(t) {
+  const theme = THEMES.includes(t) ? t : 'glass';
+  document.documentElement.dataset.theme = theme;
+  try { localStorage.setItem('lcanki-theme', theme); } catch (e) {}
+  for (const b of document.querySelectorAll('.theme-dot')) b.classList.toggle('on', b.dataset.theme === theme);
+  growth.retheme();
+}
+for (const b of document.querySelectorAll('.theme-dot')) {
+  b.addEventListener('click', async () => {
+    applyTheme(b.dataset.theme);
+    await setSettings({ theme: b.dataset.theme });
+  });
+}
+getSettings().then(s => applyTheme(s.theme)).catch(() => applyTheme('glass'));
 
 function makeRow(card) {
   const li = document.createElement('li');
@@ -110,6 +216,11 @@ function renderList(sel, items, emptyMsg) {
 }
 
 async function load() {
+  safely('Goal view', loadGoals);      // independent of everything below
+  safely('Dashboard', loadDashboard);
+}
+
+async function loadDashboard() {
   // Greeting
   const now = new Date();
   const hour = now.getHours();
@@ -128,10 +239,11 @@ async function load() {
   // Quant drills are synced via the bridge into a separate store; pull them in
   // so they show alongside LeetCode cards in the counts and the Due-now list.
   let quantRows = [];
-  const mergedByDay = Object.assign({}, r.stats?.byDay || {});   // LeetCode reviews + quant reviews
+  let qrCards = [];
   try {
     const qr = await send('quant-cards');
     if (qr?.ok) {
+      qrCards = qr.cards || [];
       const nowMs = Date.now();
       quantRows = (qr.cards || []).map(qc => ({
         slug: qc.id, site: 'quant', title: qc.title || qc.id,
@@ -142,21 +254,15 @@ async function load() {
           tags: ['Quant'].concat(qc.tags || []).slice(0, 3).map(t => ({ name: t })),
         },
       }));
-      // fold quant review timestamps into the day-by-day map (heatmap / streak / today)
-      for (const qc of (qr.cards || [])) {
-        for (const ts of (qc.reviewTs || [])) {
-          const k = dayKey(new Date(ts));
-          mergedByDay[k] = (mergedByDay[k] || 0) + 1;
-        }
-      }
     }
   } catch (e) {}
   const quantDue = quantRows.filter(c => (c.due ?? 0) <= Date.now()).sort((a, b) => (a.due ?? 0) - (b.due ?? 0));
 
   $('#stat-due').textContent = r.due.length + quantDue.length;
   $('#stat-tracked').textContent = r.total + quantRows.length;
-  const todayCount = mergedByDay[dayKey(new Date())] ?? 0;
-  const streak = computeStreak(mergedByDay);
+  const activity = activityByDay(await getCards(), qrCards);
+  const todayCount = activity[dayKey(new Date())] ?? 0;
+  const streak = computeStreak(activity);
   $('#stat-today').textContent = todayCount;
   $('#stat-streak').textContent = streak;
 
@@ -182,8 +288,8 @@ async function load() {
   $('#hero-solved').textContent = solvedAll;
 
 
-  renderRecent(cards);
-  loadGoals();
+  await safely('Recent activity', () => renderRecent(cards));
+  await safely('Daily activity', () => renderHeatmap(activity));
 
   const allDue = [...r.due, ...quantDue].sort((a, b) => (a.due ?? 0) - (b.due ?? 0));
   $('#due-summary').textContent = allDue.length
@@ -220,13 +326,14 @@ let goalsSeq = 0;
 async function loadGoals() {
   const my = ++goalsSeq;
   const r = await send('getGoals');
-  if (!r?.ok || my !== goalsSeq) return;
-  goalState = r;
-  renderPills();
-  const view = await send('getGoalView', { id: r.activeId });
+  if (my !== goalsSeq) return;
+  if (r?.ok) { goalState = r; renderPills(); }
+  else showBanner(`Couldn’t load goals: ${r?.error}`);
+  loadNext(my);                                      // ranking never waits on the goal view
+  const view = await send('getGoalView', { id: r?.ok ? r.activeId : null });
   if (my !== goalsSeq) return;
   if (view?.ok) growth.update(view);
-  loadNext(my);
+  else growth.fail(view?.error || 'no answer from the extension');
 }
 
 function renderPills() {
@@ -324,11 +431,60 @@ $('#goal-form').addEventListener('submit', async (e) => {
   loadGoals();
 });
 
+// ------------------------------------------------------- history import ----
+// Until you've imported once, offer it right under the goals: the growth view
+// only knows the problems this extension has seen, not your whole history.
+let importTimer = 0;
+async function refreshImportCta() {
+  const r = await send('getImportState');
+  const st = r?.ok ? r.state : null;
+  const cta = $('#import-cta'), btn = $('#import-btn'), msg = $('#import-msg');
+  if (st?.completedOnce && !st.running) { cta.hidden = true; return; }
+  cta.hidden = false;
+  clearTimeout(importTimer);
+  if (st?.running) {
+    btn.disabled = true;
+    btn.textContent = 'Importing your LeetCode history…';
+    msg.textContent = `${st.added} submissions · ${st.newCards} new problems`;
+    importTimer = setTimeout(async () => {
+      await refreshImportCta();
+      const again = await send('getImportState');
+      if (again?.state && !again.state.running) { loadGoals(); loadDashboard(); }
+    }, 1500);
+  } else {
+    btn.disabled = false;
+    btn.textContent = '↓ Grow it from your LeetCode history';
+    msg.textContent = st?.error ? st.error : '';
+  }
+}
+$('#import-btn').addEventListener('click', async () => {
+  $('#import-msg').textContent = 'opening LeetCode in the background…';
+  const r = await send('startImport', { perDay: 5 }, 45000);
+  if (!r?.ok) $('#import-msg').textContent = r?.error || 'could not start';
+  refreshImportCta();
+});
+refreshImportCta();
+
 // -------------------------------------------------------------- next up ----
 let nextRetry = 0;
 async function loadNext(my = goalsSeq) {
   const r = await send('getRecommendations', { id: goalState.activeId, k: 5 });
-  if (!r?.ok || my !== goalsSeq) return;
+  if (my !== goalsSeq) return;
+  if (!r?.ok) {
+    // Never leave "Ranking…" up forever: say what went wrong and offer a retry.
+    const ul = $('#next-list');
+    ul.textContent = '';
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = `Couldn’t rank problems: ${r?.error || 'no response from the extension'}. `;
+    const retry = document.createElement('a');
+    retry.href = '#';
+    retry.textContent = 'Try again';
+    retry.addEventListener('click', (e) => { e.preventDefault(); loadNext(); });
+    li.appendChild(retry);
+    ul.appendChild(li);
+    return;
+  }
   const active = goalState.goals.find(g => g.id === goalState.activeId);
   $('#next-sub').textContent = active ? `for ${active.name}` : 'picked for you';
   const ul = $('#next-list');
@@ -336,9 +492,9 @@ async function loadNext(my = goalsSeq) {
   if (!r.recs.length) {
     const li = document.createElement('li');
     li.className = 'empty';
-    li.textContent = r.catalog.loading || !r.catalog.size
-      ? 'Fetching LeetCode’s problem list…'
-      : 'Nothing to suggest right now — your due reviews come first.';
+    li.textContent = !r.catalog.size
+      ? 'Loading LeetCode’s problem list…'
+      : 'Nothing new to suggest right now — your due reviews come first.';
     ul.appendChild(li);
   }
   for (const rec of r.recs) ul.appendChild(nextRow(rec));
@@ -351,11 +507,13 @@ async function loadNext(my = goalsSeq) {
     foot.push('Predictions start personalising after a few graded attempts.');
   }
   if (r.weakest?.length) foot.push(`Weakest: ${r.weakest.map(w => humanTag(w.concept)).join(', ')}.`);
+  if (r.catalog.refreshing && r.catalog.total) {
+    foot.push(`Updating LeetCode’s problem list (${r.catalog.done.toLocaleString()} / ${r.catalog.total.toLocaleString()})…`);
+  }
   $('#next-foot').textContent = foot.join(' ');
 
-  // The catalog downloads on first run; check back once it lands.
   clearTimeout(nextRetry);
-  if (r.catalog.loading || !r.catalog.size) nextRetry = setTimeout(() => loadNext(), 8000);
+  if (r.catalog.refreshing || !r.catalog.size) nextRetry = setTimeout(() => loadNext(), 3000);
 }
 
 function nextRow(rec) {

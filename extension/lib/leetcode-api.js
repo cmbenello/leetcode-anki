@@ -77,29 +77,54 @@ const DIFF_CODE = { Easy: 'E', Medium: 'M', Hard: 'H' };
  * advancing by the requested size silently skips most of the catalog.
  * Row: { s: slug, t: title, d: 'E'|'M'|'H', a: acRate, p: 1 if paid, g: [tag slugs], n: frontend id }
  */
-export async function fetchCatalog({ pageSize = 100, pause = 250 } = {}) {
+async function fetchCatalogPage(skip, limit) {
+  const res = await fetch(GQL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Referer': 'https://leetcode.com/problemset/' },
+    body: JSON.stringify({ query: CATALOG_QUERY, variables: { skip, limit } }),
+  });
+  if (!res.ok) throw new Error(`LeetCode catalog ${res.status}`);
+  const list = (await res.json())?.data?.problemsetQuestionList;
+  if (!list) throw new Error('LeetCode catalog: unexpected response');
+  return list;
+}
+
+/**
+ * Pages are fetched a few at a time (the server caps each at 100 rows), so a
+ * refresh takes seconds rather than the ~30s of a sequential crawl.
+ * onProgress(done, total) is called as pages land.
+ */
+export async function fetchCatalog({ pageSize = 100, concurrency = 4, onProgress = null } = {}) {
+  const first = await fetchCatalogPage(0, pageSize);
+  const total = first.total;
+  const pages = new Map([[0, first.questions || []]]);
+  let done = pages.get(0).length;
+  onProgress?.(done, total);
+  const skips = [];
+  for (let s = pages.get(0).length || pageSize; s < total; s += pageSize) skips.push(s);
+  let next = 0;
+  async function worker() {
+    while (next < skips.length) {
+      const skip = skips[next++];
+      const list = await fetchCatalogPage(skip, pageSize);
+      pages.set(skip, list.questions || []);
+      done += (list.questions || []).length;
+      onProgress?.(done, total);
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, worker));
   const rows = [];
-  let skip = 0, total = Infinity;
-  while (skip < total) {
-    const res = await fetch(GQL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Referer': 'https://leetcode.com/problemset/' },
-      body: JSON.stringify({ query: CATALOG_QUERY, variables: { skip, limit: pageSize } }),
-    });
-    if (!res.ok) throw new Error(`LeetCode catalog ${res.status}`);
-    const list = (await res.json())?.data?.problemsetQuestionList;
-    if (!list) throw new Error('LeetCode catalog: unexpected response');
-    total = list.total;
-    for (const q of list.questions || []) {
+  const seen = new Set();
+  for (const skip of [...pages.keys()].sort((a, b) => a - b)) {
+    for (const q of pages.get(skip)) {
+      if (seen.has(q.titleSlug)) continue;
+      seen.add(q.titleSlug);
       rows.push({
         s: q.titleSlug, t: q.title, d: DIFF_CODE[q.difficulty] || 'M',
         a: Math.round((q.acRate ?? 50) * 10) / 10, p: q.paidOnly ? 1 : 0,
         g: (q.topicTags || []).map(t => t.slug), n: q.frontendQuestionId,
       });
     }
-    if (!list.questions?.length) break;
-    skip += list.questions.length;
-    await new Promise(r => setTimeout(r, pause));
   }
   return rows;
 }

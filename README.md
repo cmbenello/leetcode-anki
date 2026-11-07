@@ -37,6 +37,28 @@ Each solved problem is a leaf. Angle is its topic. Distance from the centre is h
 
 `lib/model.js` documents every constant and the Drill experiment it comes from. The footer reports whether past predictions were honest.
 
+## Importing your history
+
+Options → **Import LeetCode history** pulls every submission from your LeetCode account using your existing login, so sign in to leetcode.com in Chrome first. It runs inside a LeetCode tab, opening one in the background if needed.
+
+- Imported solves count toward goals and fill in the growth view and the daily tracker. The recommender learns from them too.
+- Imported problems join your reviews a few a day (5 by default), longest-ago first, instead of all at once.
+- Re-running only adds what's new.
+
+NeetCode problems you solved on LeetCode come in this way. NeetCode's own editor has no history API, so problems solved only there can't be imported.
+
+## Colour schemes
+
+Use the dots next to ⚙ on the new-tab page: **Glass** (default; Apple-style frosted glass over a blue wallpaper), **Ocean**, **Dusk** or **Graphite**. Every colour, including the growth canvas, comes from theme tokens in `newtab/newtab.css`.
+
+## Problem catalog
+
+`extension/data/catalog.json` is a bundled snapshot of LeetCode's ~4,100 problems, so recommendations work the moment the extension is installed. The background refreshes it weekly, which takes about 5 seconds. To regenerate the snapshot:
+
+```bash
+node scripts/update-catalog.mjs
+```
+
 ## How the GitHub repo gets organized
 
 ```

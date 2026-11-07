@@ -112,6 +112,96 @@ test('Drill export: honest p_pred only, prior inputs included, abandoned attempt
   assert.ok(rows.some(r => r.item === 'lc:coin-change' && r.kind === 'abandoned' && r.correct === 0));
 });
 
+// ---- history import ----
+const T0 = Math.floor(Date.now() / 1000);
+const PAGE = [
+  { id: 1001, title: 'Two Sum', titleSlug: 'two-sum', statusDisplay: 'Accepted', lang: 'python3', runtime: '50 ms', memory: '17 MB', timestamp: String(T0 - 86400 * 200) },
+  { id: 1002, title: 'Coin Change', titleSlug: 'coin-change', statusDisplay: 'Wrong Answer', lang: 'python3', runtime: 'N/A', memory: 'N/A', timestamp: String(T0 - 86400 * 100) },
+  { id: 1003, title: 'Coin Change', titleSlug: 'coin-change', statusDisplay: 'Accepted', lang: 'python3', runtime: '900 ms', memory: '18 MB', timestamp: String(T0 - 86400 * 100 + 600) },
+  { id: 1004, title: 'Valid Anagram', titleSlug: 'valid-anagram', statusDisplay: 'Accepted', lang: 'python3', runtime: '20 ms', memory: '16 MB', timestamp: String(T0 - 86400 * 10) },
+];
+const running = (extra = {}) => ({ running: true, perDay: 2, pages: 0, added: 0, newCards: 0, completedOnce: false, heartbeat: Date.now(), ...extra });
+const localDay = (ms) => new Date(ms).toDateString();
+
+test('history import: merges by submission id and never double-counts', async () => {
+  freshStore();
+  store.importState = running();
+  let r = await send({ kind: 'importBatch', submissions: PAGE, cursor: { offset: 4 } });
+  assert.ok(r.ok && !r.stop);
+  r = await send({ kind: 'importBatch', submissions: PAGE, cursor: { offset: 8 } });   // same page again
+  assert.equal(store.cards['coin-change'].submissions.length, 2);
+  assert.equal(store.importState.added, 4);
+  assert.equal(store.cards['coin-change'].title, 'Coin Change');
+  assert.equal(store.cards['coin-change'].submissions[1].runtime, '900 ms');
+  assert.equal(store.cards['coin-change'].submissions[0].runtime, undefined, "'N/A' isn't stored");
+});
+
+test('history import: reviews trickle in a few a day, oldest first, none due today', async () => {
+  freshStore();
+  store.importState = running();
+  await send({ kind: 'importBatch', submissions: PAGE, cursor: {} });
+  await send({ kind: 'importProgress', finished: true });
+  const due = (s) => store.cards[s].due;
+  for (const s of ['two-sum', 'coin-change', 'valid-anagram']) assert.ok(due(s) > Date.now(), `${s} due now`);
+  assert.equal(localDay(due('two-sum')), localDay(due('coin-change')), 'perDay 2: first two share a day');
+  assert.ok(due('valid-anagram') - due('two-sum') > 20 * 3600e3, 'third spills to the next day');
+  assert.equal(store.importState.completedOnce, true);
+  assert.equal(store.importState.scheduled, 3);
+  const g = await send({ kind: 'getGoals' });
+  assert.equal(g.totalSolved, 3, 'imported ACs count as solved');
+});
+
+test('history import: an already-graded problem keeps its own schedule', async () => {
+  freshStore();
+  await acThenGrade({ startedAt: Date.now() - 60e3 });
+  const before = store.cards['two-sum'].due;
+  store.importState = running();
+  await send({ kind: 'importBatch', submissions: PAGE, cursor: {} });
+  await send({ kind: 'importProgress', finished: true });
+  assert.equal(store.cards['two-sum'].due, before);
+});
+
+test('history import: a re-run stops at the first page it already has', async () => {
+  freshStore();
+  store.importState = running();
+  await send({ kind: 'importBatch', submissions: PAGE, cursor: {} });
+  await send({ kind: 'importProgress', finished: true });
+  store.importState = running({ completedOnce: true });
+  const r = await send({ kind: 'importBatch', submissions: PAGE, cursor: {} });
+  assert.ok(r.stop, 'caught up');
+  assert.equal(store.importState.running, false);
+});
+
+test('history import: logged out gives a clear message', async () => {
+  freshStore();
+  store.importState = running();
+  await send({ kind: 'importProgress', error: 'not-logged-in' });
+  assert.match(store.importState.error, /not logged in/);
+  assert.equal(store.importState.running, false);
+});
+
+test('malformed card records cannot break goals, ranking or the due list', async () => {
+  freshStore();
+  const now = Date.now(), D = 864e5;
+  store.cards = {
+    'two-sum': { slug: 'two-sum', title: 'Two Sum', reps: 1, due: now - D, history: [{ t: now - 3 * D, q: 4 }], submissions: [{ t: now - 3 * D, status: 'Accepted' }] },
+    'null-card': null,
+    'no-slug': { title: 'No Slug', reps: 2, history: [{ t: now - 5 * D, q: 4 }] },
+    'at-stamps': { slug: 'at-stamps', reps: 1, history: [{ at: now - 4 * D, q: 4 }], submissions: [{ at: now - 4 * D, status: 'Accepted' }] },
+    'no-time': { slug: 'no-time', reps: 1, history: [{ q: 4 }], submissions: [{ status: 'Accepted' }] },
+    'subs-object': { slug: 'subs-object', reps: 1, history: [{ t: now - 3 * D, q: 3 }], submissions: { a: 1 } },
+    'bad-due': { slug: 'bad-due', reps: 1, due: 'soon', history: [{ t: now - 2 * D, q: 5 }] },
+  };
+  for (const kind of ['getGoals', 'getGoalView', 'getRecommendations', 'getDueList']) {
+    const r = await send({ kind, id: null });
+    assert.ok(r?.ok, `${kind}: ${r?.error}`);
+  }
+  const g = await send({ kind: 'getGoals' });
+  assert.equal(g.totalSolved, 6, 'every recoverable card still counts');
+  const v = await send({ kind: 'getGoalView', id: null });
+  assert.ok(v.problems.every(p => Number.isFinite(p.t)), 'no NaN dates reach the growth view');
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try { await fn(); console.log(`  ok   ${name}`); }

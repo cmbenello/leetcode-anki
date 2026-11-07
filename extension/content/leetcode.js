@@ -848,9 +848,57 @@
     return false;
   }
 
-  chrome.runtime.onMessage.addListener((msg) => {
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.kind === 'spa-navigated') setTimeout(() => { init(); notePath(); }, 300);
+    if (msg?.kind === 'lc-import-run') {
+      sendResponse({ ok: true, started: true });
+      runHistoryImport(msg.cursor || {}).catch((e) => send('importProgress', { error: e?.message || String(e) }));
+    }
   });
+
+  // ---------- history import ----------
+  // Runs INSIDE a leetcode.com tab so the request carries your login and
+  // LeetCode's own CSRF token, exactly as the site's submissions page does.
+  // (The REST /api/submissions endpoint sits behind a bot check that scripted
+  // requests can't pass; GraphQL doesn't.) Newest first, 20 per page.
+  const SUBMISSIONS_Q = `
+    query submissionList($offset: Int!, $limit: Int!, $lastKey: String) {
+      submissionList(offset: $offset, limit: $limit, lastKey: $lastKey) {
+        lastKey hasNext
+        submissions { id title titleSlug statusDisplay lang runtime memory timestamp }
+      }
+    }`;
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  async function runHistoryImport({ offset = 0, lastKey = null }) {
+    const csrf = (document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/) || [])[1] || '';
+    let pages = 0;
+    for (;;) {
+      let res = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        res = await fetch('/graphql/', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrftoken': csrf },
+          body: JSON.stringify({ query: SUBMISSIONS_Q, variables: { offset, limit: 20, lastKey } }),
+        });
+        if (res.status !== 429 && res.status < 500) break;
+        await sleep(2500 * (attempt + 1));          // rate limited / flaky: back off
+      }
+      if (!res.ok) { await send('importProgress', { error: `LeetCode answered ${res.status}` }); return; }
+      const list = (await res.json())?.data?.submissionList;
+      if (!list?.submissions) {
+        await send('importProgress', pages ? { finished: true } : { error: 'not-logged-in' });
+        return;
+      }
+      pages += 1;
+      offset += list.submissions.length;
+      lastKey = list.lastKey ?? null;
+      const r = await send('importBatch', { submissions: list.submissions, cursor: { offset, lastKey } });
+      if (!r?.ok || r.stop) return;                 // cancelled, or caught up with what we already have
+      if (!list.hasNext || !list.submissions.length) { await send('importProgress', { finished: true }); return; }
+      await sleep(700);
+    }
+  }
   window.addEventListener('popstate', () => setTimeout(notePath, 50));
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') init();

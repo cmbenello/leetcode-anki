@@ -121,6 +121,31 @@
     </section>
 
     <section>
+      <h2>Import your LeetCode history</h2>
+      <p class="hint">
+        Pulls every submission from your LeetCode account (newest first) using your existing
+        login, so you need to be signed in to leetcode.com in Chrome. It opens a LeetCode tab
+        in the background if none is open. Solved problems count toward your goals, fill in the
+        growth view and daily tracker, and teach the recommender. You won't get a flood of
+        reviews: imported problems join your review queue a few a day, longest-ago first.
+        Running it again later only adds what's new.
+      </p>
+      <div class="row">
+        <label class="inline">Add to reviews <input id="import-per-day" type="number" min="1" max="50" value="5" style="width:56px" /> per day</label>
+      </div>
+      <div class="row">
+        <button id="import-lc">Import LeetCode history</button>
+        <button id="import-cancel" hidden>Stop</button>
+        <span id="import-status"></span>
+      </div>
+      <p class="hint">
+        NeetCode: most NeetCode problems are LeetCode problems, so anything you solved on
+        LeetCode comes in here. Problems solved only in NeetCode's own editor can't be
+        imported: NeetCode has no history API to read.
+      </p>
+    </section>
+
+    <section>
       <h2>Repair mis-detected submissions</h2>
       <p class="hint">
         Older versions guessed verdicts from the page and sometimes logged a

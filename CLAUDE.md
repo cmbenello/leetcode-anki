@@ -122,6 +122,7 @@ leetcode-anki/
 - Stay in Phase 1+2 until both checklists are done.
 - Run `npm test` (scheduler, learner model, goals) before wiring changes to UI.
 - Day keys are LOCAL time and come only from `lib/dates.js`; never `toISOString().slice(0, 10)`.
+- Never assume card records are well-formed: `getCards()` normalises them (`lib/cards.js`) because one bad record used to break every dashboard request. New-tab sections load independently and show their own errors; don't chain them.
 - Submission verdicts come from the judge endpoint via `content/inject.js`; the DOM observer is a fallback only.
 - `lib/model.js` mirrors Drill (`~/Coding/embed/src/embed/engine.py`); keep constants in sync and cite the experiment.
 - A logged `pPred` must be the prediction as of the attempt's START (`factors.startedAt`), from earlier attempts only — the attempt's own verdict is stored before the grade and would otherwise leak in. Only `pPredV: 2` entries are trusted; `tests/background.test.js` guards this.

@@ -3,6 +3,7 @@
 
 import { DEFAULT_INTERVALS_MIN, DEFAULT_GROWTH } from './sm2.js';
 import { dayKeyMs } from './dates.js';
+import { sanitizeCards } from './cards.js';
 
 const KEYS = {
   CARDS: 'cards',          // { [slug]: card }
@@ -30,6 +31,9 @@ const DEFAULT_SETTINGS = {
   // Off => every card is scheduled as if it had never been failed.
   easeEnabled: true,
 
+  // New-tab dashboard colour scheme: 'glass' | 'ocean' | 'dusk' | 'graphite'
+  theme: 'glass',
+
   // Daily reminder
   dailyReminderEnabled: false,
   dailyReminderTime: '09:00',  // local time HH:MM
@@ -44,7 +48,13 @@ async function set(key, value) {
 }
 
 // ---------- cards ----------
-export async function getCards()       { return get(KEYS.CARDS, {}); }
+// Normalised on every read (see lib/cards.js): one malformed record must not
+// be able to break every request that walks the card list.
+export async function getCards() {
+  const cards = await get(KEYS.CARDS, {});
+  sanitizeCards(cards);
+  return cards;
+}
 export async function setCards(cards)  { return set(KEYS.CARDS, cards); }
 export async function getCard(slug) {
   const cards = await getCards();
