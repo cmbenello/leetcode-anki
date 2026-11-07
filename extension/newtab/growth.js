@@ -54,7 +54,7 @@ const TOPIC_HUE = {
   'graph': 200, 'heap': 352, 'backtracking': 284, 'dynamic-programming': 158,
   'greedy': 28, 'bit-manipulation': 228, 'math': 185, 'other': 220,
 };
-const hsla = (h, l, a) => `hsla(${h}, 46%, ${l}%, ${a.toFixed(3)})`;
+const hsla = (h, l, a) => `hsla(${h}, 34%, ${l}%, ${a.toFixed(3)})`;   // soft, low saturation
 
 export function primaryTopic(tags = []) {
   const norm = new Set(tags.map(t => ALIAS[t] || t));
@@ -170,20 +170,16 @@ function buildPaint(L) {
   const bySec = {};
   for (const sec of L.sectors) {
     const I = sec.intensity;
+    // Lines stay neutral silver; only the dots carry the topic's colour,
+    // brighter the more you've solved in that topic (recent ones a touch more).
     bySec[sec.topic] = {
       edges: EDGE_WIDTH.map(() => new Path2D()),
-      edge: hsla(sec.hue, 52 + 18 * I, 0.18 + 0.5 * I),
-      tone: {                                  // recent problems a touch brighter
-        old: hsla(sec.hue, 56 + 16 * I, 0.32 + 0.55 * I),
-        mid: hsla(sec.hue, 60 + 16 * I, 0.38 + 0.56 * I),
-        recent: hsla(sec.hue, 66 + 14 * I, 0.5 + 0.5 * I),
-        today: hsla(sec.hue, 80, 0.95),
+      tone: {
+        old: hsla(sec.hue, 58 + 10 * I, 0.38 + 0.5 * I),
+        mid: hsla(sec.hue, 61 + 10 * I, 0.44 + 0.5 * I),
+        recent: hsla(sec.hue, 66 + 8 * I, 0.55 + 0.45 * I),
+        today: hsla(sec.hue, 76, 0.95),
       },
-      label: hsla(sec.hue, 70, 0.35 + 0.55 * I),
-      // a faint tint over the topic's wedge — strongest near the centre,
-      // fading outward — so the region itself reads as lit up
-      washIn: hsla(sec.hue, 55, 0.02 + 0.07 * I),
-      washOut: hsla(sec.hue, 55, 0),
     };
   }
   for (const nd of L.nodes) {
@@ -280,24 +276,10 @@ export function mountGrowth(root, { onOpen } = {}) {
       ctx.restore();
     }
 
-    // region washes first, underneath everything
-    for (const sec of L.sectors) {
-      const g = ctx.createRadialGradient(cx, cy, L.r0, cx, cy, R);
-      g.addColorStop(0, edges[sec.topic].washIn);
-      g.addColorStop(1, edges[sec.topic].washOut);
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(sec.start) * L.r0, cy + Math.sin(sec.start) * L.r0);
-      ctx.arc(cx, cy, R, sec.start, sec.start + sec.span);
-      ctx.arc(cx, cy, L.r0, sec.start + sec.span, sec.start, true);
-      ctx.closePath();
-      ctx.fillStyle = g;
-      ctx.fill();
-    }
-
     ctx.lineCap = 'round';
+    ctx.strokeStyle = COLORS.edge;
     for (const sec of L.sectors) {
       const paint = edges[sec.topic];
-      ctx.strokeStyle = paint.edge;
       paint.edges.forEach((path, i) => {
         ctx.lineWidth = EDGE_WIDTH[i] * L.scale / k;
         ctx.stroke(path);
@@ -341,7 +323,7 @@ export function mountGrowth(root, { onOpen } = {}) {
     ctx.textBaseline = 'middle';
     for (const sec of L.sectors) {
       if (sec.span < 0.2) continue;
-      ctx.fillStyle = edges[sec.topic].label;
+      ctx.fillStyle = COLORS.label;
       const lx = cx + Math.cos(sec.mid) * (R + 24), ly = cy + Math.sin(sec.mid) * (R + 24);
       ctx.textAlign = Math.abs(Math.cos(sec.mid)) < 0.3 ? 'center' : Math.cos(sec.mid) > 0 ? 'left' : 'right';
       ctx.fillText(`${topicLabel(sec.topic)} ${sec.count}`, lx, ly);
