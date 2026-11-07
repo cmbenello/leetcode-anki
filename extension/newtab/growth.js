@@ -413,7 +413,8 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
   // pastel glow rises behind the picked dots while the rest fade back.
   // Dots keep their size.
   const V_NORMAL = { a: 1, g: 0 }, V_PICK = { a: 1, g: 1 }, V_FADE = { a: 0, g: 0 };
-  const TRANSITION_MS = 1100;
+  // phase to phase is a slow drift; into or out of All is quicker
+  const BETWEEN_MS = 1100, FROM_ALL_MS = 600;
   const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   let anim = null;
   const targetOf = (nd) => (!phase ? V_NORMAL : nd.inPhase ? V_PICK : V_FADE);
@@ -421,14 +422,14 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     anim = null;
     if (L) for (const nd of L.nodes) nd.vis = { ...targetOf(nd) };
   }
-  function startTransition() {
+  function startTransition(ms) {
     if (reducedMotion || !L) { settleVisuals(); requestDraw(); return; }
     for (const nd of L.nodes) { nd.from = { ...(nd.vis || targetOf(nd)) }; nd.to = targetOf(nd); }
-    anim = { start: performance.now() };
+    anim = { start: performance.now(), ms };
     requestDraw();
   }
   function stepTransition() {
-    const t = Math.min(1, (performance.now() - anim.start) / TRANSITION_MS);
+    const t = Math.min(1, (performance.now() - anim.start) / anim.ms);
     const e = (1 - Math.cos(Math.PI * t)) / 2;                                // gentle sine ease
     for (const nd of L.nodes) {
       const f = nd.from, to = nd.to;
@@ -635,13 +636,14 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     if (list.some(p => p.id !== 'unstructured')) for (const p of list) if (p.count || phase === p.id) tab(p.id, p.name, p.count);
   }
   function setPhase(id) {
+    const between = !!(phase && id);
     phase = id;
     try { if (id) localStorage.setItem('lcanki.phase', id); else localStorage.removeItem('lcanki.phase'); } catch (e) { /* fine */ }
     paint = buildPaint(L, phase);
     clearHover();
     setHub();
     renderPhases();
-    startTransition();
+    startTransition(between ? BETWEEN_MS : FROM_ALL_MS);
   }
 
   // ---------------------------------------------------------- zoom / pan ----
