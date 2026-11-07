@@ -2,7 +2,7 @@
 
 Chrome extension that adds Anki-style spaced repetition to LeetCode and auto-commits your progress to a GitHub repo.
 
-- 4-button grading (Again / Hard / Good / Easy — or press 1–4) with spaced repetition that adapts to lapses
+- After an Accepted, a small corner bar asks *how hard was it?* Rate 1 (easy) to 4 (very hard), by click or key. Spaced repetition does the rest and adapts to lapses
 - Verdicts read from LeetCode's own judge response, so Run results, stale history and quick problem switches can't be misrecorded
 - Goals ("Google interview", Blind 75, your own list) shown as a radial growth view on the new-tab page
 - "Next up" recommendations from a learner model ported from Drill (`~/Coding/embed`), each shown with its predicted solve rate and the evidence behind it
@@ -58,7 +58,7 @@ NeetCode doesn't record dates, so synced problems form the trunk at the centre o
 
 ## The new-tab page
 
-It's deliberately minimal: your goal pills, the growth view, and a faint ⚙ in the corner, all in an Apple-style frosted-glass look over a blue wallpaper. Below that are the daily tracker, stats, Next up and your problem lists.
+It's deliberately minimal: your goal pills, a large tree graph of your solved problems in one soft silver on flat grey, and a faint ⚙ in the corner. Below that are the daily tracker, stats, Next up and your problem lists.
 
 - **Zoom** the growth view with a pinch or ⌘/Ctrl+scroll.
 - **Drag** to pan, **double-click** to zoom in, and use ⤢ to reset.

@@ -483,12 +483,12 @@ button.ghost.danger:hover { color: var(--danger); border-color: var(--danger); }
   --hard:      rgba(var(--mono), 0.74);
   --danger:    #d98a8a;               /* error banner only */
   /* branch brightness by recency — still one colour */
-  --stem:      rgba(var(--mono), 0.36);
+  --stem:      rgba(var(--mono), 0.40);
   --stem-hi:   rgba(var(--mono), 0.95);
-  --leaf-old:  rgba(var(--mono), 0.34);
-  --leaf-mid:  rgba(var(--mono), 0.44);
-  --leaf-recent:rgba(var(--mono), 0.58);
-  --leaf-today:rgba(var(--mono), 0.78);
+  --leaf-old:  rgba(var(--mono), 0.48);
+  --leaf-mid:  rgba(var(--mono), 0.6);
+  --leaf-recent:rgba(var(--mono), 0.76);
+  --leaf-today:rgba(var(--mono), 0.94);
   --halo:      rgba(var(--mono), 0.18);
   --ring:      rgba(var(--mono), 0.16);
   --ring-faint:rgba(var(--mono), 0.06);
@@ -501,9 +501,7 @@ button.ghost.danger:hover { color: var(--danger); border-color: var(--danger); }
 }
 :root[data-theme="glass"] body {
   background:
-    radial-gradient(120% 90% at 50% 40%, transparent 55%, rgba(0, 0, 0, 0.22) 100%),
-    linear-gradient(180deg, #18191c 0%, #151618 100%);
-  background-attachment: fixed;
+    #17181b;
 }
 
 /* panes */
@@ -688,3 +686,35 @@ main { padding-top: 34px; }
 :root[data-theme="glass"] .pmeter { background: rgba(var(--mono), 0.08); }
 :root[data-theme="glass"] .pmeter i { background: rgba(var(--mono), 0.55); }
 :root[data-theme="glass"] .diff { font-weight: 500; }
+
+/* ---- flat and fast: no blur anywhere. On a flat background the frosted
+   blur was invisible, and re-blurring every pane while scrolling was what
+   made the page jitter. ---- */
+:root[data-theme="glass"] body { background-attachment: scroll; }
+:root[data-theme="glass"] .stat,
+:root[data-theme="glass"] .card,
+:root[data-theme="glass"] .goal-form,
+:root[data-theme="glass"] .pill,
+:root[data-theme="glass"] .chip,
+:root[data-theme="glass"] .seg,
+:root[data-theme="glass"] button.ghost,
+:root[data-theme="glass"] .growth-zoom button,
+:root[data-theme="glass"] .growth-hub,
+:root[data-theme="glass"] .growth-tip,
+:root[data-theme="glass"] .end-btn {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+:root[data-theme="glass"] .stat,
+:root[data-theme="glass"] .card { box-shadow: none; }
+
+/* bigger: the graph breaks out of the content column */
+.growth { width: 100vw; margin-left: calc(50% - 50vw); }
+.growth-stage { max-width: 1500px; margin: 0 auto; }
+.growth-hub { width: 190px; }
+.growth-done { font-size: 54px; }
+.growth-target { font-size: 17px; }
+.growth-goal { font-size: 13.5px; }
+.growth-pace { font-size: 12px; }
+
+body { overflow-x: hidden; }   /* the full-bleed graph must not add a sideways scrollbar */

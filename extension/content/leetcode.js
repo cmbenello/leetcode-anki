@@ -14,9 +14,9 @@
 
   // Esc closes the modal. Attached once at script load, on window with
   // capture so Monaco/LeetCode handlers can't swallow it.
-  // 1/2/3/4 grade Again/Hard/Good/Easy while the panel is open — but never
-  // while you're typing in the editor or a text field.
-  const KEY_TO_Q = { '1': 0, '2': 3, '3': 4, '4': 5 };
+  // 1–4 rate difficulty (1 = easy … 4 = very hard) while the bar is open —
+  // never while you're typing in the editor or a text field.
+  const KEY_TO_Q = { '1': 5, '2': 4, '3': 3, '4': 0 };
   function typingInto(t) {
     if (!t) return false;
     if (t.closest?.('.monaco-editor, .cm-editor')) return true;
@@ -472,11 +472,14 @@
   let root = null;
   let timerHandle = null;
 
+  // You rate how hard it was; the scheduler maps that to its own terms, so
+  // there's no "Again" button and no intervals to look at:
+  //   1 easy -> easy, 2 -> good, 3 -> hard, 4 very hard -> again
   const BUTTON_SPECS = [
-    { id: 'again', label: 'Again', q: 0 },
-    { id: 'hard',  label: 'Hard',  q: 3 },
-    { id: 'good',  label: 'Good',  q: 4 },
-    { id: 'easy',  label: 'Easy',  q: 5 },
+    { id: 'easy',  label: '1', hint: 'easy',      q: 5 },
+    { id: 'good',  label: '2', hint: 'ok',        q: 4 },
+    { id: 'hard',  label: '3', hint: 'hard',      q: 3 },
+    { id: 'again', label: '4', hint: 'very hard', q: 0 },
   ];
 
   function ensureRoot() {
@@ -484,24 +487,17 @@
     root = document.createElement('div');
     root.id = 'lcanki-root';
     root.classList.add('lcanki-hidden');
+    // A small bar in the corner, not a modal: no backdrop, doesn't take focus,
+    // the page stays usable behind it.
     root.innerHTML = `
-      <div class="lcanki-panel">
-        <div class="lcanki-title-row">
-          <div class="lcanki-title"></div>
-          <span class="lcanki-badge"></span>
-          <button class="lcanki-close" title="Close" aria-label="Close">×</button>
-        </div>
-        <div class="lcanki-meta">
-          <span class="lcanki-elapsed">0m 00s</span>
-          <span class="lcanki-streak"></span>
-        </div>
-        <div class="lcanki-split"><span class="lcanki-read">read 0s</span> · <span class="lcanki-code">code 0s</span></div>
+      <div class="lcanki-panel lcanki-bar" role="group" aria-label="How hard was it?">
+        <span class="lcanki-q">How hard was it?</span>
         <div class="lcanki-buttons"></div>
+        <button class="lcanki-close" title="Close (Esc)" aria-label="Close">×</button>
+        <span class="lcanki-scale-hint"><span>easy</span><span>very hard</span></span>
       </div>
     `;
     document.body.appendChild(root);
-    // Dismiss: × button, a grade button, or Esc. Backdrop click does NOT close.
-    // × and Esc skip-advance the session if one is active.
     root.querySelector('.lcanki-close').addEventListener('click', dismissPanel);
     const btnRow = root.querySelector('.lcanki-buttons');
     for (const spec of BUTTON_SPECS) {
@@ -509,8 +505,8 @@
       b.className = 'lcanki-btn';
       b.dataset.q = spec.q;
       b.dataset.id = spec.id;
-      b.innerHTML = `<kbd class="lcanki-kbd">${BUTTON_SPECS.indexOf(spec) + 1}</kbd>${spec.label}<span class="lcanki-interval">—</span>`;
-      b.title = `${spec.label} (press ${BUTTON_SPECS.indexOf(spec) + 1})`;
+      b.textContent = spec.label;
+      b.title = `${spec.label} — ${spec.hint}`;
       b.addEventListener('click', () => onGrade(spec.q));
       btnRow.appendChild(b);
     }
