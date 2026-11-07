@@ -279,6 +279,26 @@ test('topic suggestions: only problems on that arc, inside the active goal when 
   }
 });
 
+test('★ star: set on a held solve, kept through Esc or a rating, shown on the graph', async () => {
+  freshStore();
+  await send({ kind: 'recordSubmission', slug: 'two-sum', title: 'Two Sum', url: URL_TS, status: 'Accepted', submissionId: '90', source: 'network' });
+  let r = await send({ kind: 'setStar', slug: 'two-sum', starred: true });
+  assert.ok(r.ok && r.pending);
+  assert.equal((await send({ kind: 'getCardWithPredictions', slug: 'two-sum', title: 'Two Sum' })).starred, true, 'the bar sees it');
+  await send({ kind: 'dismissRating', slug: 'two-sum' });
+  assert.equal(store.cards['two-sum'].starred, true, 'Esc keeps the star');
+  let v = await send({ kind: 'getGoalView', id: null });
+  assert.equal(v.problems.find(p => p.slug === 'two-sum').starred, true);
+  await send({ kind: 'setStar', slug: 'two-sum', starred: false });
+  assert.ok(!store.cards['two-sum'].starred, 'unstarring a card');
+  // starred, then rated
+  await send({ kind: 'recordSubmission', slug: 'coin-change', title: 'Coin Change', url: 'https://leetcode.com/problems/coin-change/', status: 'Accepted', submissionId: '91', source: 'network' });
+  await send({ kind: 'setStar', slug: 'coin-change', starred: true });
+  await send({ kind: 'grade', slug: 'coin-change', title: 'Coin Change', quality: 3, durationMs: 1000, url: 'https://leetcode.com/problems/coin-change/', factors: { startedAt: Date.now() - 1000 } });
+  assert.equal(store.cards['coin-change'].starred, true, 'rating keeps the star');
+  assert.equal((await send({ kind: 'setStar', slug: 'never-seen', starred: true })).ok, false);
+});
+
 // ---- prep phases ----
 const solvedOn = (slug, d, id) => ({ slug, title: slug, site: 'leetcode', reps: 1, lapses: 0, due: Date.now() + 864e5,
   history: [{ t: d.getTime(), q: 4 }], submissions: [{ t: d.getTime(), status: 'Accepted', id }] });

@@ -69,7 +69,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const { nextIntervalMin } = applyGrade(card, b.quality, settings);
             predictions[b.id] = nextIntervalMin;
           }
-          sendResponse({ ok: true, card, predictions });
+          const starred = !!(card.starred || (await getPending())[slug]?.starred);
+          sendResponse({ ok: true, card, predictions, starred });
+          break;
+        }
+        case 'setStar': {
+          sendResponse(await setStar(msg.slug, !!msg.starred));
           break;
         }
         case 'grade': {
@@ -338,6 +343,7 @@ async function handleGrade({ slug, title, quality, durationMs, readingMs, coding
     existing = newCard(slug, held?.title || title, site);
     if (held) {
       existing.submissions = held.submissions;
+      if (held.starred) existing.starred = true;
       if (held.url) existing.lastUrl = held.url;
       if (held.code != null) { existing.pendingCode = held.code; existing.pendingLang = held.lang; }
       delete pend[slug];
@@ -422,6 +428,7 @@ async function dismissRating(slug) {
   if (!held) return { ok: true, stored: false };
   const c = newCard(slug, held.title || slugTitle(slug), held.site || 'leetcode');
   c.submissions = held.submissions;
+  if (held.starred) c.starred = true;
   if (held.url) c.lastUrl = held.url;
   if (held.code != null) {
     // the hourly sweep still commits an Accepted solution if sync is on
@@ -434,6 +441,22 @@ async function dismissRating(slug) {
   delete pend[slug];
   await setPending(pend);
   return { ok: true, stored: true };
+}
+
+// ★ "come back to this": on the card, or on the held solve until it becomes one.
+async function setStar(slug, starred) {
+  if (!slug) return { ok: false, error: 'missing slug' };
+  const card = await getCard(slug);
+  if (card) {
+    if (starred) { card.starred = true; card.starredAt = Date.now(); } else { delete card.starred; delete card.starredAt; }
+    await upsertCard(card);
+    return { ok: true, starred };
+  }
+  const pend = await getPending();
+  if (!pend[slug]) return { ok: false, error: 'nothing recorded for this problem yet' };
+  if (starred) pend[slug].starred = true; else delete pend[slug].starred;
+  await setPending(pend);
+  return { ok: true, starred, pending: true };
 }
 
 async function recordSubmissionEvent({ slug, title, url, status, submissionId, source, detail, code, language }) {
@@ -1001,6 +1024,7 @@ function solvedProblems(cards, metaAll, nc = null) {
       // then NeetCode's pattern (e.g. "1-D Dynamic Programming")
       similar: m?.similar ?? [],
       pattern: nc?.bySlug[c.slug]?.p ?? null,
+      starred: !!c.starred,                      // ★ come back to this
     });
   }
   return out.sort((a, b) => a.t - b.t || (a.slug < b.slug ? -1 : 1));

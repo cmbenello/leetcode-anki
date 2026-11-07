@@ -67,6 +67,10 @@ How to read the graph:
 - **Lines** mean "built on". Each problem connects to the earlier problem in its topic it's most related to: a LeetCode *similar question* first, otherwise shared topics and NeetCode pattern. Along an arc, problems follow that tree, so a problem sits beside the one it built on, even on another ring. Faint lines through the middle link problems that span topics. Hover a problem to see what it grew from and why.
 - **Phases** sit under the graph (e.g. "Company A 2026 · Company B 2026 · Unstructured"). Pick one to light up the problems you first solved during it; the rest fade but keep their places. Set phases in Options → *Prep phases*. Anything outside a phase, or solved only on NeetCode (no dates), is *Unstructured*. To seed them on first run without committing your own timeline, copy `extension/data/phases.example.json` to `phases.local.json` (git-ignored).
 
+- **Stars**: ☆ on the rating bar (or **S**) marks a problem to come back to. *★ Starred* under the graph lights those up.
+- **Topic labels** are clickable: you get a suggested next problem on that arc (within your goal when it has some), and *another* steps through the top few.
+- The graph draws instantly from the last view and refreshes in the background.
+
 Below the graph are the daily tracker, stats, Next up and your problem lists.
 
 - **Zoom** the growth view with a pinch or ⌘/Ctrl+scroll.

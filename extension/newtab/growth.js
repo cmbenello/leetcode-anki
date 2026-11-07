@@ -297,8 +297,10 @@ function linkPath(path, L, a, b) {
  * coordinates). With a phase picked, problems outside it — and links that
  * touch them — go into separate faint batches.
  */
+const STAR = '__starred';                       // the ★ filter, alongside the phases
+const inFilter = (nd, f) => !f || (f === STAR ? !!nd.starred : nd.phase === f);
 function buildPaint(L, phase = null) {
-  for (const nd of L.nodes) nd.inPhase = !phase || nd.phase === phase;
+  for (const nd of L.nodes) nd.inPhase = inFilter(nd, phase);
   for (const sec of L.sectors) sec.inCount = sec.nodes.reduce((n, nd) => n + (nd.inPhase ? 1 : 0), 0);
   const paint = { tone: {} };
   for (const sec of L.sectors) {
@@ -356,7 +358,10 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
   // the picked prep phase (null = all), remembered per browser
   let phase = null;
   try { phase = localStorage.getItem('lcanki.phase') || null; } catch (e) { /* storage blocked */ }
-  const phaseInfo = (id) => view?.phases?.find(p => p.id === id) || null;
+  const starCount = () => (view?.problems || []).reduce((n, p) => n + (p.starred ? 1 : 0), 0);
+  const phaseInfo = (id) => id === STAR
+    ? (starCount() ? { id: STAR, name: 'Starred', count: starCount(), star: true } : null)
+    : view?.phases?.find(p => p.id === id) || null;
   // view transform: screen = content * s + (tx, ty)
   let s = 1, tx = 0, ty = 0;
   const MIN_S = 1, MAX_S = 6;
@@ -419,8 +424,8 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     ctx.lineWidth = 0.7 / k;
     ctx.stroke(paint.cross);
     ctx.lineWidth = 0.9 / k;
-    if (phase) { ctx.strokeStyle = 'rgba(206,210,217,0.035)'; ctx.stroke(paint.linksDim); }
-    ctx.strokeStyle = phase ? 'rgba(206,210,217,0.26)' : 'rgba(206,210,217,0.2)';
+    if (phase) { ctx.strokeStyle = 'rgba(206,210,217,0.03)'; ctx.stroke(paint.linksDim); }
+    ctx.strokeStyle = phase ? 'rgba(206,210,217,0.34)' : 'rgba(206,210,217,0.2)';
     ctx.stroke(paint.links);
 
     // dots: one fill per (topic, tone)
@@ -430,13 +435,13 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
         ctx.beginPath();
         for (const nd of sec.nodes) {
           if (nd.tone !== tone || !nd.inPhase) continue;
-          const r = nd.dot / k;
+          const r = (phase ? nd.dot * 1.55 : nd.dot) / k;   // picked out: bigger, so a filter reads at a glance
           ctx.moveTo(nd.x + r, nd.y);
           ctx.arc(nd.x, nd.y, r, 0, TAU);
           any = true;
         }
         if (!any) continue;
-        ctx.fillStyle = paint.tone[sec.topic][tone];
+        ctx.fillStyle = phase ? paint.tone[sec.topic].recent : paint.tone[sec.topic][tone];
         ctx.fill();
       }
     }
@@ -450,7 +455,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
         ctx.moveTo(nd.x + r, nd.y);
         ctx.arc(nd.x, nd.y, r, 0, TAU);
       }
-      ctx.fillStyle = 'rgba(206,210,217,0.13)';
+      ctx.fillStyle = 'rgba(206,210,217,0.09)';
       ctx.fill();
     }
 
@@ -499,7 +504,8 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       root.querySelector('.growth-goal').textContent = ph.name;
       root.querySelector('.growth-done').textContent = ph.count;
       root.querySelector('.growth-target').textContent = '';
-      root.querySelector('.growth-pace').textContent = !ph.from ? 'outside any phase'
+      root.querySelector('.growth-pace').textContent = ph.star ? 'to come back to'
+        : !ph.from ? 'outside any phase'
         : ph.to ? `${fmtDay(ph.from)} – ${fmtDay(ph.to)}` : `since ${fmtDay(ph.from)}`;
       return;
     }
@@ -519,8 +525,9 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
   // ------------------------------------------------------------ phases ----
   function renderPhases() {
     const list = view?.phases || [];
+    const stars = starCount();
     phaseBar.textContent = '';
-    phaseBar.hidden = !list.some(p => p.id !== 'unstructured');
+    phaseBar.hidden = !list.some(p => p.id !== 'unstructured') && !stars;
     if (phaseBar.hidden) return;
     const tab = (id, name, count) => {
       const b = document.createElement('button');
@@ -535,7 +542,9 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       phaseBar.appendChild(b);
     };
     tab(null, 'All', view.problems.length);
-    for (const p of list) tab(p.id, p.name, p.count);
+    if (stars) tab(STAR, '★ Starred', stars);
+    // empty phases (nothing solved then, or nothing on this goal) stay out of the way
+    if (list.some(p => p.id !== 'unstructured')) for (const p of list) if (p.count || phase === p.id) tab(p.id, p.name, p.count);
   }
   function setPhase(id) {
     phase = id;
@@ -747,7 +756,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     sw.className = 'tip-dot';
     sw.style.background = paint.tone[nd.sec]?.recent || COLORS.hi;
     const b = document.createElement('b');
-    b.textContent = nd.title;
+    b.textContent = nd.starred ? `${nd.title} ★` : nd.title;
     head.append(sw, b);
     const meta = document.createElement('div');
     meta.className = 'tip-meta';

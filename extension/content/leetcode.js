@@ -32,6 +32,7 @@
       return;
     }
     if (e.metaKey || e.ctrlKey || e.altKey || typingInto(e.target)) return;
+    if (e.key === 's' || e.key === 'S') { e.preventDefault(); e.stopPropagation(); toggleStar(); return; }
     const q = KEY_TO_Q[e.key];
     if (q === undefined) return;
     e.preventDefault();
@@ -497,12 +498,14 @@
     root.innerHTML = `
       <div class="lcanki-panel lcanki-bar" role="group" aria-label="How hard was it? 1 easy, 4 very hard">
         <span class="lcanki-title"></span>
+        <button class="lcanki-star" type="button" aria-pressed="false" title="Come back to this (S)" aria-label="Star: come back to this">☆</button>
         <div class="lcanki-buttons"></div>
         <button class="lcanki-close" title="Close: keep the solve, no review (Esc)" aria-label="Close">×</button>
       </div>
     `;
     document.body.appendChild(root);
     root.querySelector('.lcanki-close').addEventListener('click', dismissPanel);
+    root.querySelector('.lcanki-star').addEventListener('click', toggleStar);
     const btnRow = root.querySelector('.lcanki-buttons');
     for (const spec of BUTTON_SPECS) {
       const b = document.createElement('button');
@@ -514,6 +517,25 @@
       b.addEventListener('click', () => onGrade(spec.q));
       btnRow.appendChild(b);
     }
+  }
+
+  // ★ "come back to this": saved straight away, kept whether you rate or close.
+  let starred = false;
+  function showStar(on) {
+    starred = !!on;
+    const b = root?.querySelector('.lcanki-star');
+    if (!b) return;
+    b.textContent = starred ? '★' : '☆';
+    b.setAttribute('aria-pressed', String(starred));
+    b.classList.toggle('on', starred);
+  }
+  async function toggleStar() {
+    const slug = currentSlug();
+    if (!slug) return;
+    const want = !starred;
+    showStar(want);
+    const r = await send('setStar', { slug, starred: want });
+    if (!r?.ok) showStar(!want);
   }
 
   function setTitle(s) {
@@ -606,6 +628,7 @@
     if (!slug) return;
     const resp = await send('getCardWithPredictions', { slug, title: currentTitle() });
     if (!resp?.ok) return;
+    showStar(resp.starred ?? resp.card?.starred);
     setIntervals(resp.predictions);
     const c = resp.card;
     if (!c || (!c.reps && !c.lapses))      setStreak('new');
