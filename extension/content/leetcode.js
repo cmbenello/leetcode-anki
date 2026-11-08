@@ -42,7 +42,7 @@
     if (FELT_WORD[label]) {
       const word = document.createElement('span');
       word.className = 'lcanki-flash-word';
-      word.textContent = FELT_WORD[label];
+      word.dataset.label = FELT_WORD[label];        // drawn by CSS, out of difficulty hiders' reach
       el.appendChild(word);
     }
     el.setAttribute('aria-hidden', 'true');
@@ -449,10 +449,16 @@
   function difficultyNow() {
     return pageDifficulty() || (knownDifficulty.slug === currentSlug() ? knownDifficulty.d : null);
   }
+  // The label is drawn by CSS (::after, from data-label), never as text:
+  // "hide the difficulty" tools on LeetCode find every element whose text is
+  // Easy/Medium/Hard and set display:none on it, and they caught this pill
+  // too (they're why it showed on NeetCode but not LeetCode). widget.css
+  // also overrides an inline display:none while the pill isn't [hidden].
   function showDifficulty(d) {
     const el = root?.querySelector('.lcanki-diff');
     if (!el || (!d && !el.hidden)) return;
-    el.textContent = d || '';
+    el.textContent = '';
+    el.dataset.label = d || '';
     el.hidden = !d;
     el.dataset.level = (d || '').toLowerCase();
   }

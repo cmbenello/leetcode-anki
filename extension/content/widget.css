@@ -365,3 +365,11 @@
 /* Only the live copy's card shows. An old copy still running in a tab
    opened before an update has no owner mark, and its card stays hidden. */
 #lcanki-root:not([data-lcanki-owner]) { display: none !important; }
+
+/* Labels drawn from data-label rather than text, so page tools that hide
+   "Easy/Medium/Hard" text on LeetCode can't find them; and an inline
+   display:none from such a tool loses to this while the pill isn't [hidden]. */
+#lcanki-root .lcanki-bar .lcanki-diff:not([hidden]) { display: inline-block !important; visibility: visible !important; }
+#lcanki-root .lcanki-bar .lcanki-diff::after { content: attr(data-label); }
+.lcanki-flash .lcanki-flash-word { display: block !important; }
+.lcanki-flash .lcanki-flash-word::after { content: attr(data-label); }
