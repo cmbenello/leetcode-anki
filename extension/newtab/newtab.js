@@ -414,12 +414,8 @@ function renderPills() {
     });
     wrap.appendChild(b);
   }
-  const add = document.createElement('button');
-  add.type = 'button';
-  add.className = 'pill pill-add';
-  add.textContent = goalState.goals.length ? '+ goal' : '+ set a goal';
-  add.addEventListener('click', () => openForm(null));
-  wrap.appendChild(add);
+  // No "+ set a goal" pill: the graph shows all your practice. Goals made
+  // earlier still show here and can be edited or deleted from their pill.
 }
 
 function setFormType(t) {

@@ -19,14 +19,7 @@ Chrome extension that adds Anki-style spaced repetition to LeetCode and auto-com
 
 ## Goals and recommendations
 
-Open a new tab. Click **+ set a goal** and pick a goal type:
-
-- **Topics**: e.g. "Prepare for Google interview" with a target count and an optional deadline. You'll see the pace you need.
-- **Blind 75**: the fixed list.
-- **My list**: paste problem links.
-- **Everything**.
-
-Each solved problem is a leaf. Angle is its topic. Distance from the centre is how far you are toward the goal, and the growth reaches the dashed goal ring at 100%. Brighter leaves are recent, and a warm ring means due for review. Click a pill to switch goals, or click the active pill to edit it.
+Open a new tab: the ring graph shows everything you've solved. There's no button to set a goal any more. Goals you made in earlier versions still show as pills above the graph: click one to switch to it, or click the active one to edit or delete it.
 
 **Next up** ranks unseen problems from LeetCode's catalog (refreshed weekly) with Drill's model:
 
@@ -58,7 +51,7 @@ NeetCode doesn't record dates, so synced problems form the trunk at the centre o
 
 ## The new-tab page
 
-It's deliberately minimal: your goal pills, a large ring graph of your solved problems on flat grey, and a faint ⚙ in the corner.
+It's deliberately minimal: a large ring graph of your solved problems on flat grey, and a faint ⚙ in the corner.
 
 How to read the graph:
 
