@@ -361,3 +361,7 @@
   font: 500 24px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   letter-spacing: 0.06em; text-transform: lowercase; color: rgba(236, 239, 244, 0.78);
 }
+
+/* Only the live copy's card shows. An old copy still running in a tab
+   opened before an update has no owner mark, and its card stays hidden. */
+#lcanki-root:not([data-lcanki-owner]) { display: none !important; }

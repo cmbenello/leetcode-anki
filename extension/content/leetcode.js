@@ -606,6 +606,9 @@
     if (root && document.body.contains(root)) return;
     root = document.createElement('div');
     root.id = 'lcanki-root';
+    // Marks this card as the live copy's: widget.css hides any other
+    // #lcanki-root, i.e. one left by an old copy still running in this tab.
+    root.setAttribute('data-lcanki-owner', String(MY_START));
     root.classList.add('lcanki-hidden');
     // A small bar in the corner, not a modal: no backdrop, doesn't take focus,
     // the page stays usable behind it.
