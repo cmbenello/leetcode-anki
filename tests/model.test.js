@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   replay, predict, recommend, similarity, recallBonus, priorBeta, pBase, thetaOf,
-  calibration, mastery, mulberry32, GLOBAL, THETA0, NEAR,
+  calibration, mastery, mulberry32, GLOBAL, THETA0, NEAR, perceivedScore,
 } from '../extension/lib/model.js';
 import { makeGoal, goalProgress, goalMatches, parseSlugList, BLIND_75 } from '../extension/lib/goals.js';
 
@@ -144,6 +144,19 @@ test('list goals target their own length; parseSlugList reads URLs and slugs', (
   assert.equal(g.target, 3);
   assert.ok(goalMatches(g, 'coin-change'));
   assert.ok(!goalMatches(g, 'house-robber'));
+});
+
+test('a solve that felt hard (4) is weaker evidence than one that felt easy (1); both still count', () => {
+  const item = { slug: 'p', tags: ['dynamic-programming'], difficulty: 'Medium', acRate: 50 };
+  const after = (score) => {
+    const st = replay([{ slug: 'p', ts: 1, correct: 1, score, tags: item.tags }], { p: item });
+    return predict(st, { slug: 'q', tags: item.tags, difficulty: 'Medium', acRate: 50 }, 2).p;
+  };
+  const base = predict(replay([], { p: item }), { slug: 'q', tags: item.tags, difficulty: 'Medium', acRate: 50 }, 2).p;
+  const easy = after(perceivedScore(1)), hard = after(perceivedScore(4));
+  assert.ok(hard > base, `a hard-felt solve still raises the estimate (${base.toFixed(3)} -> ${hard.toFixed(3)})`);
+  assert.ok(easy > hard, `an easy one raises it more (${hard.toFixed(3)} < ${easy.toFixed(3)})`);
+  assert.equal(perceivedScore(undefined), 1, 'unrated solves count fully');
 });
 
 let failed = 0;

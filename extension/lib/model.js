@@ -96,10 +96,22 @@ export function pBase(st, slug, tags) {
   return eloP(0.7 * mean + 0.3 * thetaOf(st, GLOBAL), betaOf(st, slug));
 }
 
+/**
+ * How much a solve counts, from how hard it felt on the rating card (1 easy …
+ * 4 hard). Elo with partial credit: an easy solve is full evidence of ability,
+ * "solved, but barely" says the problem sits right at your level. Unrated
+ * solves count fully. EXTENSION-ONLY, not in Drill yet: these weights are
+ * uncalibrated defaults; `perceived` goes out in the Drill export so they can
+ * be fitted from real attempts.
+ */
+export const PERCEIVED_SCORE = Object.freeze({ 1: 1, 2: 0.85, 3: 0.7, 4: 0.55 });
+export const perceivedScore = (r) => PERCEIVED_SCORE[r] ?? 1;
+
 /** Drill's record(): ability moves from p_base — never from the recall-boosted p. */
 export function record(st, a) {
   const cs = conceptsOf(a.tags);
-  const d = (a.correct ? 1 : 0) - pBase(st, a.slug, a.tags);
+  const outcome = a.correct ? (a.score ?? 1) : 0;       // partial credit for hard-felt solves
+  const d = outcome - pBase(st, a.slug, a.tags);
   for (const c of [...cs, GLOBAL]) {
     const n = nOf(st, c);
     // Large early steps so a short history moves the estimate; decays with evidence.

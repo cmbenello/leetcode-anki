@@ -10,7 +10,7 @@ import {
   getGoals, setGoals, getActiveGoalId, setActiveGoalId, getCatalog, setCatalog,
   getPhasesRaw, setPhases,
 } from './lib/storage.js';
-import { replay, predict, recommend, evidenceFor, mastery, calibration, mulberry32 } from './lib/model.js';
+import { replay, predict, recommend, evidenceFor, mastery, calibration, mulberry32, perceivedScore } from './lib/model.js';
 import { makeGoal, goalMatches, goalProgress, PRESETS, INTERVIEW_TAGS, parseSlugList } from './lib/goals.js';
 import { commitWithRetry } from './lib/github.js';
 import { dayKeyMs, todayKey, lastNDayKeys } from './lib/dates.js';
@@ -314,7 +314,9 @@ function normalizeProblemUrl(url) {
   }
 }
 
-async function handleGrade({ slug, title, quality, durationMs, readingMs, codingMs, code, language, url, submission, factors }) {
+async function handleGrade({ slug, title, quality, durationMs, readingMs, codingMs, code, language, url, submission, factors, perceived }) {
+  // how hard it felt (1 easy … 4 hard), from the rating card — the predictor's input
+  const felt = [1, 2, 3, 4].includes(Number(perceived)) ? Number(perceived) : null;
   const settings = await getSettings();
   // Drill logs the model's prediction for every attempt so it can later show
   // whether its numbers were honest. That only works if the prediction is the
@@ -363,6 +365,7 @@ async function handleGrade({ slug, title, quality, durationMs, readingMs, coding
   card.history.push({
     t: Date.now(),
     q: quality,
+    perceived: felt,
     button: buttonIdFor(quality),
     durationMs: durationMs ?? null,
     readingMs: readingMs ?? null,
@@ -393,7 +396,7 @@ async function handleGrade({ slug, title, quality, durationMs, readingMs, coding
   const settings2 = await getSettings();
   if (settings2.syncEnabled && settings2.githubToken && settings2.githubRepo) {
     const label = buttonLabelFor(quality);
-    const message = `${card.site}/${slug}: ${label} (${formatDuration(prevIntervalMin)} → ${formatDuration(nextIntervalMin)})`;
+    const message = `${card.site}/${slug}: ${felt ? `felt ${felt}/4` : label} (${formatDuration(prevIntervalMin)} → ${formatDuration(nextIntervalMin)})`;
     const r = await syncToGitHub({
       card, code: commitCode, language: commitLang, url, settings: settings2, message,
     });
@@ -877,9 +880,12 @@ function cardsToAttempts(cards, metaAll) {
     for (const h of hist) {
       // Pre-fix (v1) predictions had already seen the outcome — drop them
       // rather than let them pass for calibration evidence.
-      out.push({ slug: c.slug, ts: h.t, correct: attemptCorrect(h), tags, pPred: h.pPredV === 2 ? (h.pPred ?? null) : null,
+      const correct = attemptCorrect(h);
+      out.push({ slug: c.slug, ts: h.t, correct, tags, pPred: h.pPredV === 2 ? (h.pPred ?? null) : null,
                  seconds: h.durationMs ? h.durationMs / 1000 : null, verdict: h.submission?.status ?? null,
-                 factors: h.factors ?? null, kind: 'graded' });
+                 factors: h.factors ?? null, kind: 'graded',
+                 // how hard it felt: a solve rated 4 is weaker evidence than one rated 1
+                 perceived: h.perceived ?? null, score: correct ? perceivedScore(h.perceived) : 0 });
     }
     // NeetCode completions have no time: they can't join a submission session,
     // but they ARE evidence you solved it. Count one solve, placed at the very
@@ -1457,6 +1463,7 @@ async function drillAttemptsJsonl() {
     user: 'leetcode', item: `lc:${a.slug}`, ts: a.ts / 1000, correct: a.correct,
     p_pred: a.pPred, n_pass: null, n_tests: null, verdict: a.verdict, seconds: a.seconds,
     code: '', phase: 'practice', kind: a.kind, concepts: a.tags, factors: a.factors,
+    perceived: a.perceived ?? null,             // 1 easy … 4 hard, from the rating card
     // what the extension's difficulty prior was built from, so Drill's prior
     // check doesn't have to re-fetch today's (drifted) acceptance rates
     difficulty: metaAll[a.slug]?.difficulty ?? cat.bySlug[a.slug]?.difficulty ?? null,

@@ -328,6 +328,22 @@ test('difficulty lookup: metadata first, then the bundled catalog; unknown is nu
   assert.equal(r.difficulty, 'Medium');
 });
 
+test('rating 4 = felt hard: stored for the predictor, still a solve, never a lapse', async () => {
+  freshStore();
+  await send({ kind: 'recordSubmission', slug: 'two-sum', title: 'Two Sum', url: URL_TS, status: 'Accepted', submissionId: '600', source: 'network' });
+  await send({ kind: 'grade', slug: 'two-sum', title: 'Two Sum', quality: 3, perceived: 4, durationMs: 1000, url: URL_TS,
+               submission: { status: 'Accepted', at: Date.now() }, factors: { startedAt: Date.now() - 1000 } });
+  const c = store.cards['two-sum'];
+  assert.equal(c.history.at(-1).perceived, 4);
+  assert.equal(c.lapses, 0, 'not a miss');
+  const days = (c.due - Date.now()) / 864e5;
+  assert.ok(days > 0.5 && days < 2, `back in about a day (${days.toFixed(2)}d)`);
+  const rows = (await send({ kind: 'exportDrill' })).jsonl.trim().split('\n').map(JSON.parse);
+  const g = rows.find(r => r.kind === 'graded');
+  assert.equal(g.correct, 1);
+  assert.equal(g.perceived, 4, 'the Drill export carries it');
+});
+
 // ---- prep phases ----
 const solvedOn = (slug, d, id) => ({ slug, title: slug, site: 'leetcode', reps: 1, lapses: 0, due: Date.now() + 864e5,
   history: [{ t: d.getTime(), q: 4 }], submissions: [{ t: d.getTime(), status: 'Accepted', id }] });

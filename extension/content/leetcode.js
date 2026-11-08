@@ -22,10 +22,11 @@
 
   // Esc closes the modal. Attached once at script load, on window with
   // capture so Monaco/LeetCode handlers can't swallow it.
-  // 1–4 rate difficulty (1 = easy … 4 = very hard) while the bar is open —
-  // never while you're typing in the editor or a text field.
-  const KEY_TO_Q = { '1': 5, '2': 4, '3': 3, '4': 0 };
-  const Q_TO_KEY = { 5: '1', 4: '2', 3: '3', 0: '4' };
+  // 1–4 say how hard the problem FELT (1 easy … 4 hard), for the predictor.
+  // Every rated solve is a solve: the review timer just follows the rating
+  // (1 easy, 2 good, 3–4 hard; none is "Again"). Never while you're typing in
+  // the editor or a text field.
+  const KEY_TO_Q = { '1': 5, '2': 4, '3': 3, '4': 3 };
   // The number you pressed flashes up mid-screen for a moment, so you know
   // it landed without looking for the bar.
   function flashKey(label) {
@@ -92,10 +93,11 @@
     if (e.metaKey || e.ctrlKey || e.altKey || typingInto(e.target)) return;
     if (e.key === 's' || e.key === 'S') { e.preventDefault(); e.stopPropagation(); toggleStar(); return; }
     const q = KEY_TO_Q[e.key];
+    const felt = Number(e.key);
     if (q === undefined) return;
     e.preventDefault();
     e.stopPropagation();
-    onGrade(q);
+    onGrade(q, felt);
   }, true);
 
   // ---------- site adapters ----------
@@ -584,10 +586,10 @@
   // there's no "Again" button and no intervals to look at:
   //   1 easy -> easy, 2 -> good, 3 -> hard, 4 very hard -> again
   const BUTTON_SPECS = [
-    { id: 'easy',  label: '1', hint: 'easy',      q: 5 },
-    { id: 'good',  label: '2', hint: 'ok',        q: 4 },
-    { id: 'hard',  label: '3', hint: 'hard',      q: 3 },
-    { id: 'again', label: '4', hint: 'very hard', q: 0 },
+    { id: 'easy',  label: '1', hint: 'easy',   q: 5 },
+    { id: 'good',  label: '2', hint: 'ok',     q: 4 },
+    { id: 'hard',  label: '3', hint: 'hard',   q: 3 },
+    { id: 'hard',  label: '4', hint: 'harder', q: 3 },
   ];
 
   function ensureRoot() {
@@ -766,7 +768,7 @@
     tryFetch();
   }
 
-  async function onGrade(quality) {
+  async function onGrade(quality, perceived = null) {
     const slug = currentSlug();
     if (!slug) return;
 
@@ -778,7 +780,7 @@
 
     // Brief highlight flash so the user sees their click registered, then
     // close. Sync runs in the background; the user does not wait for it.
-    flashKey(Q_TO_KEY[quality]);
+    if (perceived) flashKey(String(perceived));
     const clickedBtn = root?.querySelector(`.lcanki-btn[data-q="${quality}"]`);
     clickedBtn?.classList.add('lcanki-btn-active');
     setTimeout(() => {
@@ -800,6 +802,7 @@
       url: location.href,
       submission: lastSubmission ? { status: lastSubmission.status, at: lastSubmission.at } : null,
       factors: attemptFactors(),
+      perceived,                     // 1 easy … 4 hard: how it felt, for the predictor
     });
     newAttempt();
 
