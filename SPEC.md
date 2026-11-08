@@ -131,3 +131,16 @@ Be ready to answer all of these:
 - React or any UI framework — popup and options are <200 lines each
 - Cloud sync via a backend — GitHub repo IS the backend
 - Chrome Web Store publication — load unpacked is fine for personal use
+
+## Ideas for later (noted Nov 7, 2026 — not started)
+
+Three directions to pick up later, in roughly this order. Each line in quotes is the original ask.
+
+1. **Beyond LeetCode.** "Expand this to stuff that isn't LeetCode."
+   Problems are keyed by LeetCode slug and the content script only knows LeetCode/NeetCode pages. Generalise to a source-agnostic "problem" (id, source, topics, difficulty, attempts) so other practice can feed the same rings, phases, stars and scheduler: the quant drills (`content/quant.js` already exists), interview-style math/probability, system design, concept cards.
+
+2. **Better-integrated prediction.** "Better integrate the prediction."
+   Today the learner model (`lib/model.js`, ported from Drill) only ranks *Next up* and logs `pPred`. Use it everywhere a decision is made: show the predicted solve chance on the rating card and in topic suggestions, let it drive review timing alongside or instead of SM-2, calibrate it against the 1–4 difficulty you give, and make goals/phases ask "what raises my odds for *this* interview".
+
+3. **Understanding and generating the problem state.** "Better have an understanding of generating the problem state itself."
+   Model the problem space itself rather than treating problems as opaque ids: what each problem requires (patterns, prerequisite skills, the trick), how problems relate, and where you stand on each. Then generate from that state, e.g. new variants or targeted practice problems at the right difficulty for your weakest skill instead of only picking from LeetCode's catalog.
