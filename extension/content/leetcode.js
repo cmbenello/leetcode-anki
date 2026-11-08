@@ -50,12 +50,6 @@
     el.addEventListener('animationend', () => el.remove());
     setTimeout(() => el.remove(), 1500);
   }
-  function typingInto(t) {
-    if (!t) return false;
-    if (t.closest?.('.monaco-editor, .cm-editor')) return true;
-    const tag = (t.tagName || '').toLowerCase();
-    return tag === 'input' || tag === 'textarea' || t.isContentEditable;
-  }
   // After an extension update, the copy of this script already running in an
   // open tab is cut off from the extension. It must not keep showing its old
   // popup or grabbing keys: it removes itself, and the refreshed tab has the new one.
@@ -91,23 +85,27 @@
     el.append(msg, btn);
     document.body.appendChild(el);
   }
+  // While the card is up it owns 1-4, S and Esc, even with the cursor still in
+  // the code editor: focus is usually there right after Submit, and the key
+  // used to land in the code instead. Catching it here, in the capture phase
+  // on window, runs before the editor's own handler, and preventDefault on
+  // keydown stops the character being typed.
+  let swallow = null;                   // { key, until }: the rating key's auto-repeats
+  const eat = (e) => { e.preventDefault(); e.stopImmediatePropagation(); };
   window.addEventListener('keydown', (e) => {
     if (retire()) return;
+    // Held a moment too long, the key auto-repeats after the card has gone.
+    if (swallow && e.key === swallow.key && (e.repeat || Date.now() < swallow.until)) { eat(e); return; }
     if (!root || root.classList.contains('lcanki-hidden')) return;
-    if (e.key === 'Escape' || e.key === 'Esc') {
-      e.preventDefault();
-      e.stopPropagation();
-      dismissPanel();
-      return;
-    }
-    if (e.metaKey || e.ctrlKey || e.altKey || typingInto(e.target)) return;
-    if (e.key === 's' || e.key === 'S') { e.preventDefault(); e.stopPropagation(); toggleStar(); return; }
+    if (e.key === 'Escape' || e.key === 'Esc') { eat(e); dismissPanel(); return; }
+    if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+    if (e.repeat && (KEY_TO_Q[e.key] !== undefined || e.key === 's' || e.key === 'S')) { eat(e); return; }
+    if (e.key === 's' || e.key === 'S') { eat(e); toggleStar(); return; }
     const q = KEY_TO_Q[e.key];
-    const felt = Number(e.key);
     if (q === undefined) return;
-    e.preventDefault();
-    e.stopPropagation();
-    onGrade(q, felt);
+    eat(e);
+    swallow = { key: e.key, until: Date.now() + 700 };
+    onGrade(q, Number(e.key));
   }, true);
 
   // ---------- site adapters ----------
