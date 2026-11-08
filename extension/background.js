@@ -1287,7 +1287,8 @@ async function getRecommendations(id, k = 5, topic = null) {
   let modelGoal = goalMatch ? { tags: goal.type === 'tags' ? goal.tags : [], matches: goalMatch } : null;
   // A topic (clicked on the graph) means problems on that arc only: within
   // the active goal when it still has some there, else from anywhere.
-  const inTopic = topic ? (it) => primaryTopic(it.tags || []) === topic : null;
+  const topicOfItem = (it) => primaryTopic(it.tags || [], nc.bySlug[it.slug]?.p);
+  const inTopic = topic ? (it) => topicOfItem(it) === topic : null;
   if (topic) modelGoal = { tags: topicTags(topic), matches: goalMatch ? (it) => inTopic(it) && goalMatch(it) : inTopic };
   // Seeded per day + per attempt, so the list is stable until you do something.
   const seed = [...`${todayKey()}:${attempts.length}:${id || ''}:${topic || ''}`].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7);
@@ -1303,7 +1304,7 @@ async function getRecommendations(id, k = 5, topic = null) {
     ok: true,
     recs: recs.map(r => ({
       slug: r.item.slug, title: r.item.title || r.item.slug, difficulty: r.item.difficulty ?? null,
-      tags: r.item.tags || [], p: r.p, recall: r.recall, reason: r.reason, variant: r.variant,
+      tags: r.item.tags || [], topic: topicOfItem(r.item), p: r.p, recall: r.recall, reason: r.reason, variant: r.variant,
       retry: r.retry, onGoal: r.onGoal, url: `https://leetcode.com/problems/${r.item.slug}/`,
       ncUrl: neetcodeUrl(nc.bySlug[r.item.slug]?.n),
       evidence: evidenceFor(r.item, attempts, known, 3),

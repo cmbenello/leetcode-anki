@@ -275,14 +275,14 @@ test('getHome: goals and the active goal\'s view in one answer', async () => {
 
 test('topic suggestions: only problems on that arc, inside the active goal when it has some', async () => {
   freshStore();
-  let r = await send({ kind: 'getRecommendations', topic: 'dynamic-programming', k: 5 });
+  let r = await send({ kind: 'getRecommendations', topic: 'dp-1d', k: 5 });
   assert.ok(r.ok && r.recs.length > 0, 'something to suggest');
-  for (const x of r.recs) assert.equal(primaryTopic(x.tags), 'dynamic-programming', `${x.slug} is not a DP problem`);
+  for (const x of r.recs) assert.equal(x.topic, 'dp-1d', `${x.slug} is not a 1-D DP problem`);
   const g = await send({ kind: 'saveGoal', goal: { preset: 'blind75' } });
-  r = await send({ kind: 'getRecommendations', id: g.goal.id, topic: 'graph', k: 5 });
+  r = await send({ kind: 'getRecommendations', id: g.goal.id, topic: 'graphs', k: 5 });
   assert.ok(r.recs.length > 0);
   for (const x of r.recs) {
-    assert.equal(primaryTopic(x.tags), 'graph');
+    assert.equal(x.topic, 'graphs');
     assert.ok(x.onGoal, `${x.slug} should be from Blind 75`);
   }
 });

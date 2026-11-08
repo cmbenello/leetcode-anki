@@ -86,7 +86,7 @@ test('rings: a problem sits beside the one it built on, even on another ring', (
   ];
   const L = layout(probs, OPTS);
   const a = L.nodes.find(x => x.slug === 'coin-change'), b = L.nodes.find(x => x.slug === 'coin-change-ii');
-  const sec = L.sectors.find(s => s.topic === 'dynamic-programming');
+  const sec = L.sectors.find(s => s.topic === 'dp-1d');
   const step = sec.span / sec.count;
   assert.ok(Math.abs(a.ang - b.ang) <= step * 1.01, `angular gap ${(Math.abs(a.ang - b.ang) / step).toFixed(1)} slots`);
 });
@@ -131,7 +131,7 @@ test('layout of 600 problems is fast', () => {
   const ms = performance.now() - t0;
   assert.ok(ms < 400, `${ms.toFixed(0)} ms`);
   console.log(`       (600 problems: ${ms.toFixed(0)} ms)`);
-  assert.equal(primaryTopic(['array', 'dynamic-programming']), 'dynamic-programming');
+  assert.equal(primaryTopic(['array', 'dynamic-programming']), 'dp-1d');
 });
 
 let failed = 0;

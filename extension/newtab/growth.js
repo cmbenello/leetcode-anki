@@ -19,31 +19,16 @@
 // plain scrolling still scrolls the page. Geometry is built once per data
 // change into batched Path2D objects; zoom/pan only change the transform.
 
-import { ALIAS, primaryTopic } from '../lib/topics.js';
+import { TOPICS, primaryTopic, tagTopic } from '../lib/topics.js';
 
 export { primaryTopic };
 const TAU = Math.PI * 2;
 
-// Circle order groups related techniques next to each other.
-const DISPLAY = [
-  'array', 'hash-table', 'string', 'two-pointers', 'sliding-window', 'stack', 'binary-search',
-  'linked-list', 'tree', 'trie', 'graph', 'heap', 'backtracking', 'dynamic-programming',
-  'greedy', 'bit-manipulation', 'math', 'other',
-];
-const LABEL = {
-  'hash-table': 'hashing', 'two-pointers': 'two pointers', 'sliding-window': 'sliding window',
-  'binary-search': 'binary search', 'linked-list': 'linked list', 'dynamic-programming': 'DP',
-  'bit-manipulation': 'bits', 'heap': 'heap',
-};
+// Circle order, labels and hues: NeetCode's roadmap (lib/topics.js).
+const DISPLAY = TOPICS.map(t => t.key);
+const LABEL = Object.fromEntries(TOPICS.map(t => [t.key, t.label]));
 const topicLabel = (t) => LABEL[t] || String(t).replace(/-/g, ' ');
-
-// Each topic gets its own soft hue (no yellows).
-const TOPIC_HUE = {
-  'array': 212, 'hash-table': 170, 'string': 268, 'two-pointers': 18, 'sliding-window': 192,
-  'stack': 330, 'binary-search': 145, 'linked-list': 240, 'tree': 125, 'trie': 300,
-  'graph': 200, 'heap': 352, 'backtracking': 284, 'dynamic-programming': 158,
-  'greedy': 28, 'bit-manipulation': 228, 'math': 185, 'other': 220,
-};
+const TOPIC_HUE = Object.fromEntries(TOPICS.map(t => [t.key, t.hue]));
 const hsla = (h, l, a) => `hsla(${h}, 42%, ${l}%, ${a.toFixed(3)})`;
 
 
@@ -132,7 +117,7 @@ export function layout(problems, { size, width = size, height = size, target, no
   // rest; a floor keeps small topics legible
   const counts = {}, perRingCount = {};
   for (const p of problems) {
-    p._topic = primaryTopic(p.tags);
+    p._topic = primaryTopic(p.tags, p.pattern);
     counts[p._topic] = (counts[p._topic] || 0) + 1;
     (perRingCount[p._topic] ??= [0, 0, 0])[ringOf(p)] += 1;
   }
@@ -245,7 +230,7 @@ export function layout(problems, { size, width = size, height = size, target, no
     }
     const own = new Set();
     for (const t of nd.tags || []) {
-      const topic = ALIAS[t] || t;
+      const topic = tagTopic(t);
       if (topic !== nd.sec && sectors[topic]) own.add(topic);
     }
     if (own.size) nd.alsoIn = [...own];
