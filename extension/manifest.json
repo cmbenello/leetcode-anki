@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LeetCode Anki",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "Spaced repetition for LeetCode + NeetCode with auto-commits to a GitHub progress repo.",
   "permissions": [
     "storage",

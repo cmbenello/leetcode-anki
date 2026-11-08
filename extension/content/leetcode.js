@@ -27,14 +27,24 @@
   // (1 easy, 2 good, 3–4 hard; none is "Again"). Never while you're typing in
   // the editor or a text field.
   const KEY_TO_Q = { '1': 5, '2': 4, '3': 3, '4': 3 };
-  // The number you pressed flashes up mid-screen for a moment, so you know
-  // it landed without looking for the bar.
+  // The number you pressed flashes up mid-screen for a moment, with what it
+  // means under it, so you know it landed without looking for the card.
+  const FELT_WORD = { 1: 'easy', 2: 'okay', 3: 'tricky', 4: 'hard' };
   function flashKey(label) {
     if (!label || !document.body) return;
     document.querySelectorAll('.lcanki-flash').forEach(el => el.remove());
     const el = document.createElement('div');
     el.className = 'lcanki-flash';
-    el.textContent = label;
+    const num = document.createElement('span');
+    num.className = 'lcanki-flash-num';
+    num.textContent = label;
+    el.appendChild(num);
+    if (FELT_WORD[label]) {
+      const word = document.createElement('span');
+      word.className = 'lcanki-flash-word';
+      word.textContent = FELT_WORD[label];
+      el.appendChild(word);
+    }
     el.setAttribute('aria-hidden', 'true');
     document.body.appendChild(el);
     el.addEventListener('animationend', () => el.remove());

@@ -353,3 +353,11 @@
 /* star and close stay out of the way until you reach for them (a set star stays) */
 #lcanki-root .lcanki-bar .lcanki-star:not(.on) { opacity: 0; transition: opacity 0.12s; }
 #lcanki-root .lcanki-bar:hover .lcanki-star { opacity: 1; }
+
+/* the flashed number with its meaning underneath */
+.lcanki-flash { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.lcanki-flash .lcanki-flash-num { font: 600 120px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.lcanki-flash .lcanki-flash-word {
+  font: 500 24px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0.06em; text-transform: lowercase; color: rgba(236, 239, 244, 0.78);
+}
