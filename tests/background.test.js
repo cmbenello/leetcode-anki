@@ -319,6 +319,15 @@ test('the new tab\'s cached view is kept current in storage when data changes', 
   assert.equal(store.homeCache.view.problems.find(p => p.slug === 'two-sum').starred, true, 'and refreshed after a change');
 });
 
+test('difficulty lookup: metadata first, then the bundled catalog; unknown is null', async () => {
+  freshStore();
+  assert.equal((await send({ kind: 'getDifficulty', slug: 'two-sum' })).difficulty, 'Easy');
+  assert.equal((await send({ kind: 'getDifficulty', slug: 'contains-duplicate' })).difficulty, 'Easy', 'from the catalog');
+  assert.equal((await send({ kind: 'getDifficulty', slug: 'not-a-real-problem' })).difficulty, null);
+  const r = await send({ kind: 'getCardWithPredictions', slug: 'coin-change', title: 'Coin Change' });
+  assert.equal(r.difficulty, 'Medium');
+});
+
 // ---- prep phases ----
 const solvedOn = (slug, d, id) => ({ slug, title: slug, site: 'leetcode', reps: 1, lapses: 0, due: Date.now() + 864e5,
   history: [{ t: d.getTime(), q: 4 }], submissions: [{ t: d.getTime(), status: 'Accepted', id }] });

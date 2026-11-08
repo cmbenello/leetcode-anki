@@ -60,19 +60,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       switch (msg?.kind) {
         case 'getCardWithPredictions': {
-          const settings = await getSettings();
           const slug = msg.slug;
+          const difficulty = await difficultyOf(slug);          // first: nothing below may cost us this
           let card = await getCard(slug);
           if (!card) card = newCard(slug, msg.title);
           const predictions = {};
-          for (const b of BUTTONS) {
-            const { nextIntervalMin } = applyGrade(card, b.quality, settings);
-            predictions[b.id] = nextIntervalMin;
-          }
+          try {
+            const settings = await getSettings();
+            for (const b of BUTTONS) predictions[b.id] = applyGrade(card, b.quality, settings).nextIntervalMin;
+          } catch (e) { /* intervals are decoration */ }
           const starred = !!(card.starred || (await getPending())[slug]?.starred);
-          let difficulty = (await getMeta(slug))?.difficulty || null;
-          if (!difficulty) { await haveCatalog(); difficulty = (await catalogIndex()).bySlug[slug]?.difficulty || null; }
           sendResponse({ ok: true, card, predictions, starred, difficulty });
+          break;
+        }
+        case 'getDifficulty': {
+          sendResponse({ ok: true, difficulty: await difficultyOf(msg.slug) });
           break;
         }
         case 'setStar': {
@@ -943,6 +945,17 @@ async function loadBundledCatalog() {
     console.warn('[lcanki] bundled catalog unavailable:', e?.message || e);
   }
   return false;
+}
+
+/** "Easy" | "Medium" | "Hard" for a LeetCode slug: its metadata, else the catalog. */
+async function difficultyOf(slug) {
+  if (!slug) return null;
+  try {
+    const m = (await getMeta(slug))?.difficulty;
+    if (m) return m;
+    await haveCatalog();
+    return (await catalogIndex()).bySlug[slug]?.difficulty || null;
+  } catch (e) { return null; }
 }
 
 async function haveCatalog() {

@@ -424,6 +424,19 @@
     }
     return null;
   }
+  // After a submit LeetCode swaps the description for the submission view, so
+  // the badge may be gone when the card appears: remember it from when the
+  // problem loaded (checked every second until found).
+  let knownDifficulty = { slug: null, d: null };
+  function rememberDifficulty() {
+    const slug = currentSlug();
+    if (knownDifficulty.slug === slug && knownDifficulty.d) return;
+    const d = pageDifficulty();
+    knownDifficulty = { slug, d: d || null };
+  }
+  function difficultyNow() {
+    return pageDifficulty() || (knownDifficulty.slug === currentSlug() ? knownDifficulty.d : null);
+  }
   function showDifficulty(d) {
     const el = root?.querySelector('.lcanki-diff');
     if (!el || (!d && !el.hidden)) return;
@@ -435,9 +448,12 @@
     if (retire()) return;
     if (!root) ensureRoot();
     setTitle(currentTitle());
-    showDifficulty(pageDifficulty());
+    showDifficulty(difficultyNow());
     root.classList.remove('lcanki-hidden');
     refreshFromState();
+    // and its own lookup, so nothing else in refreshFromState can cost it
+    const slug = currentSlug();
+    send('getDifficulty', { slug }).then((r) => { if (r?.difficulty && slug === currentSlug()) showDifficulty(difficultyNow() || r.difficulty); });
   }
   function hidePanel() {
     root?.classList.add('lcanki-hidden');
@@ -707,7 +723,7 @@
     const resp = await send('getCardWithPredictions', { slug, title: currentTitle() });
     if (!resp?.ok) return;
     showStar(resp.starred ?? resp.card?.starred);
-    showDifficulty(pageDifficulty() || resp.difficulty);
+    showDifficulty(difficultyNow() || resp.difficulty);
     setIntervals(resp.predictions);
     const c = resp.card;
     if (!c || (!c.reps && !c.lapses))      setStreak('new');
@@ -862,8 +878,10 @@
     refreshFromState();
     startSubmissionObserver();
     if (timerHandle) clearInterval(timerHandle);
+    rememberDifficulty();
     timerHandle = setInterval(() => {
       try { tickElapsed(); } catch (e) { console.warn('[lcanki] tick error', e); }
+      try { rememberDifficulty(); } catch (e) {}
     }, 1000);
 
     // If this navigation was driven by an active session pointing at this
