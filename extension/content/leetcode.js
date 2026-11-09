@@ -459,6 +459,7 @@
     el.dataset.label = d || '';
     el.hidden = !d;
     el.dataset.level = (d || '').toLowerCase();
+    applyOffset();                      // a wider card must still fit where you left it
   }
   function showPanel() {
     if (retire()) return;
@@ -466,6 +467,7 @@
     setTitle(currentTitle());
     showDifficulty(difficultyNow());
     root.classList.remove('lcanki-hidden');
+    applyOffset();                      // wherever you last dragged it
     refreshFromState();
     // and its own lookup, so nothing else in refreshFromState can cost it
     const slug = currentSlug();
@@ -630,6 +632,77 @@
     document.body.appendChild(root);
     root.querySelector('.lcanki-close').addEventListener('click', dismissPanel);
     root.querySelector('.lcanki-star').addEventListener('click', toggleStar);
+    wireDrag(root.querySelector('.lcanki-bar'));
+  }
+
+  // ---------- drag the card ----------
+  // Grab it anywhere but the star or × and put it where it's out of the way.
+  // It opens there next time too, on any problem and in any tab; a
+  // double-click puts it back in the middle. It moves with the `translate`
+  // property, not `transform`, so the entry animation (which animates
+  // transform) doesn't fight it.
+  const CARD_POS_KEY = 'cardOffset';
+  const CENTRE = { dx: 0, dy: 0 };
+  let cardOffset = CENTRE;              // where you last left it
+  let applied = CENTRE;                 // what's on the card right now
+  try {
+    chrome.storage.local.get(CARD_POS_KEY).then((x) => { if (x?.[CARD_POS_KEY]) { cardOffset = x[CARD_POS_KEY]; applyOffset(); } }).catch(() => {});
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area === 'local' && ch[CARD_POS_KEY]) { cardOffset = ch[CARD_POS_KEY].newValue || CENTRE; applyOffset(); }
+    });
+  } catch (e) {}
+  // Keeps the whole card on screen: a spot saved on a bigger window still fits.
+  // Measures the layout box (the root is fixed at 0,0), which ignores both the
+  // offset and the entry animation's slide.
+  function clampOffset(el, o) {
+    const w = el.offsetWidth, h = el.offsetHeight;
+    if (!w) return o;
+    const M = 8, left = el.offsetLeft, top = el.offsetTop;
+    const fit = (v, lo, hi) => (lo > hi ? (lo + hi) / 2 : Math.min(hi, Math.max(lo, v)));
+    return {
+      dx: Math.round(fit(o.dx, M - left, innerWidth - M - (left + w))),
+      dy: Math.round(fit(o.dy, M - top, innerHeight - M - (top + h))),
+    };
+  }
+  function setOffset(el, o) {
+    applied = o;
+    el.style.translate = o.dx || o.dy ? `${o.dx}px ${o.dy}px` : '';
+  }
+  function applyOffset() {
+    const el = root?.querySelector('.lcanki-bar');
+    if (el && !root.classList.contains('lcanki-hidden')) setOffset(el, clampOffset(el, cardOffset));
+  }
+  function saveOffset(o) {
+    cardOffset = o;
+    try { chrome.storage.local.set({ [CARD_POS_KEY]: o }).catch(() => {}); } catch (e) {}
+  }
+  function wireDrag(el) {
+    let drag = null;
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.target.closest('button')) return;
+      e.preventDefault();                 // no text selection, and the editor keeps focus
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, from: applied };
+      el.setPointerCapture(e.pointerId);
+      el.classList.add('lcanki-dragging');
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      setOffset(el, clampOffset(el, { dx: drag.from.dx + e.clientX - drag.x, dy: drag.from.dy + e.clientY - drag.y }));
+    });
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const moved = applied.dx !== drag.from.dx || applied.dy !== drag.from.dy;
+      drag = null;
+      el.classList.remove('lcanki-dragging');
+      if (moved) saveOffset(applied);
+    };
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    el.addEventListener('dblclick', (e) => {
+      if (e.target.closest('button')) return;
+      setOffset(el, CENTRE);
+      saveOffset(CENTRE);
+    });
   }
 
   // ★ "come back to this": saved straight away, kept whether you rate or close.

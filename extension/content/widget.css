@@ -373,3 +373,7 @@
 #lcanki-root .lcanki-bar .lcanki-diff::after { content: attr(data-label); }
 .lcanki-flash .lcanki-flash-word { display: block !important; }
 .lcanki-flash .lcanki-flash-word::after { content: attr(data-label); }
+
+/* Drag it anywhere (the star and × keep their pointer). */
+#lcanki-root .lcanki-panel.lcanki-bar { cursor: grab; touch-action: none; }
+#lcanki-root .lcanki-panel.lcanki-bar.lcanki-dragging { cursor: grabbing; }
