@@ -9,15 +9,14 @@
 //   links      "built on" links bow inward inside their topic; links between
 //              topics are bundled through the middle (Holten, "Hierarchical
 //              Edge Bundles", 2006), kept faint
-//   dots       colour = topic, brighter where you're stronger (see strength); a touch
+//   dots       colour = topic (brighter where you've done more); a touch
 //              brighter if recent
 //
 //   phases     pick a prep phase below the graph to light up just the problems
 //              first solved in it; the rest fade back but keep their places
-//   strength   a faint halo hugs the outer ring where you're strong, relative to
-//              your other topics; your weakest get none (lib/strength.js — how
-//              cleanly you solve, not how often). Dots tone with it too, which
-//              shows once a topic is opened. Hover a label for the number
+//   strength   not drawn on the ring (bars, glows and dot tints were all tried
+//              and dropped): hover a label, or open a topic, for the number
+//              (lib/strength.js — how cleanly you solve, not how often)
 //   subtopics  click a topic's label to open it: its problems slide round to
 //              fill the circle, split by subtopic (lib/subtopics.js), each with
 //              its own strength. Esc or "all topics" goes back; click a
@@ -37,7 +36,7 @@ const TAU = Math.PI * 2;
 const LABEL = Object.fromEntries(TOPICS.map(t => [t.key, t.label]));
 const topicLabel = (t) => LABEL[t] || String(t).replace(/-/g, ' ');
 const TOPIC_HUE = Object.fromEntries(TOPICS.map(t => [t.key, t.hue]));
-const hsla = (h, l, a, sat = 42) => `hsla(${h}, ${sat.toFixed(0)}%, ${l}%, ${a.toFixed(3)})`;
+const hsla = (h, l, a) => `hsla(${h}, 42%, ${l}%, ${a.toFixed(3)})`;
 
 
 // Neutral colours come from the page's theme tokens (newtab.css).
@@ -322,12 +321,11 @@ function buildPaint(L, phase = null) {
   for (const sec of L.sectors) sec.inCount = sec.nodes.reduce((n, nd) => n + (nd.inPhase ? 1 : 0), 0);
   const paint = { tone: {} };
   for (const sec of L.sectors) {
-    // intensity: dimmer and greyer toward 0, full colour at 1
-    const I = sec.intensity, sat = 12 + 36 * I;
+    const I = sec.intensity;
     paint.tone[sec.topic] = {
-      old: hsla(sec.hue, 58 + 10 * I, 0.42 + 0.5 * I, sat),
-      mid: hsla(sec.hue, 61 + 10 * I, 0.48 + 0.5 * I, sat),
-      recent: hsla(sec.hue, 66 + 8 * I, 0.6 + 0.4 * I, sat + 6),
+      old: hsla(sec.hue, 58 + 10 * I, 0.42 + 0.5 * I),
+      mid: hsla(sec.hue, 61 + 10 * I, 0.48 + 0.5 * I),
+      recent: hsla(sec.hue, 66 + 8 * I, 0.6 + 0.4 * I),
       today: hsla(sec.hue, 76, 0.97),
     };
   }
@@ -407,63 +405,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     if (!view) return layout([], { width: W, height: H, target: 1 });
     const opts = { width: W, height: H, target: view.progress.target, now: view.now };
     const probs = view.problems.map(p => ({ ...p }));
-    return strengthTone(f ? layout(probs.filter(p => topicOfProblem(p) === f), { ...opts, ...subtopicGroups(f) }) : layout(probs, opts), f);
-  }
-  // Strength, quietly: a topic's dots are brighter and more colourful the
-  // stronger you are there, dimmer and greyer where you're weak, RELATIVE TO
-  // YOUR OTHER TOPICS: your weakest is always the most muted, your strongest
-  // the brightest. On a mostly clean history every topic sits around 80–87%,
-  // and an absolute scale painted them all alike. Spread is measured in
-  // log-odds (85→90% is as big a step as 50→62%) with a floor, so topics a
-  // point or two apart aren't pulled to opposite ends. A rough guess sits in
-  // the middle; without strength, brightness stays the layout's own.
-  const MIN_SPREAD = 0.35;
-  const logit = (p) => Math.log(Math.max(1e-3, Math.min(1 - 1e-3, p)) / (1 - Math.max(1e-3, Math.min(1 - 1e-3, p))));
-  // "other" (SQL, shell, misc) is a catch-all, not a topic to get strong in:
-  // it stays out of the scale and never glows.
-  const scaled = (fk, key) => !(!fk && key === 'other');
-  function strengthTone(lay, fk) {
-    const sure = lay.sectors.filter(sec => scaled(fk, sec.topic)).map(sec => strengthIn(fk, sec.topic)).filter(v => v?.sure).map(v => logit(v.p));
-    const lo = Math.min(...sure), hi = Math.max(...sure);
-    const span = Math.max(MIN_SPREAD, hi - lo), mid = (lo + hi) / 2;
-    for (const sec of lay.sectors) {
-      const v = strengthIn(fk, sec.topic);
-      sec.rel = null;
-      if (!v || !scaled(fk, sec.topic)) continue;
-      if (v.sure && sure.length > 1) sec.rel = Math.min(1, Math.max(0, (logit(v.p) - (mid - span / 2)) / span));
-      sec.intensity = sec.rel == null ? 0.5 : 0.08 + 0.92 * sec.rel;
-    }
-    return lay;
-  }
-
-  // The halo: a faint pastel blur just outside the outer ring, along each arc,
-  // as bright as that arc's strength relative to your others: your strongest
-  // softly lit, your weakest not at all, a rough guess not at all. Only the
-  // blur is drawn, never a line: the stroke goes far off-canvas and its shadow
-  // is offset back into place.
-  const HALO_MAX = 0.6, HALO_OFF = 20000;
-  function drawHalo(ctx, lay, alpha) {
-    if (alpha < 0.01) return;
-    const { cx, cy } = lay, r = lay.rings[2] + 7 * Math.sqrt(lay.scale);
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineWidth = 3.5 / s;
-    ctx.shadowOffsetX = -HALO_OFF * s * dpr;         // shadows ignore the transform: device pixels
-    ctx.shadowBlur = 12 * dpr;
-    for (const sec of lay.sectors) {
-      if (sec.rel == null || sec.rel < 0.05) continue;
-      const pad = Math.min(0.03, sec.span * 0.18), a0 = sec.start + pad, a1 = sec.start + sec.span - pad;
-      if (a1 <= a0) continue;
-      const lift = hoverLabel === sec.topic ? 1.5 : 1;
-      const a = Math.min(1, alpha * lift * HALO_MAX * sec.rel ** 1.2);
-      const col = `hsla(${sec.hue}, 46%, 80%, ${a.toFixed(3)})`;
-      ctx.shadowColor = col;
-      ctx.strokeStyle = col;
-      ctx.beginPath();
-      ctx.arc(cx + HALO_OFF, cy, r, a0, a1);
-      ctx.stroke();
-    }
-    ctx.restore();
+    return f ? layout(probs.filter(p => topicOfProblem(p) === f), { ...opts, ...subtopicGroups(f) }) : layout(probs, opts);
   }
   // "your weakest", "2nd strongest"… among the arcs on screen, for the label card
   function strengthRank(fk, key) {
@@ -662,7 +604,6 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       ctx.fill();
     }
 
-    drawHalo(ctx, L, 1);
     drawLabels(ctx, L, focus, 1, true);
   }
 
@@ -761,9 +702,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     // labels hand over without overlapping: the old ones are gone
     // before the new ones start to show
     const lout = 1 - Math.min(1, e * 2.5), lin = Math.max(0, (e - 0.55) / 0.45);
-    drawHalo(ctx, m.prev, lout);
     drawLabels(ctx, m.prev, m.prevFocus, lout, false);
-    drawHalo(ctx, L, lin);
     drawLabels(ctx, L, focus, lin, true);
     if (t >= 1) { morph = null; linksIn = performance.now(); }
     requestDraw();
