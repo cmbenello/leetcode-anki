@@ -36,7 +36,7 @@ const TAU = Math.PI * 2;
 const LABEL = Object.fromEntries(TOPICS.map(t => [t.key, t.label]));
 const topicLabel = (t) => LABEL[t] || String(t).replace(/-/g, ' ');
 const TOPIC_HUE = Object.fromEntries(TOPICS.map(t => [t.key, t.hue]));
-const hsla = (h, l, a) => `hsla(${h}, 42%, ${l}%, ${a.toFixed(3)})`;
+const hsla = (h, l, a, sat = 42) => `hsla(${h}, ${sat.toFixed(0)}%, ${l}%, ${a.toFixed(3)})`;
 
 
 // Neutral colours come from the page's theme tokens (newtab.css).
@@ -321,11 +321,12 @@ function buildPaint(L, phase = null) {
   for (const sec of L.sectors) sec.inCount = sec.nodes.reduce((n, nd) => n + (nd.inPhase ? 1 : 0), 0);
   const paint = { tone: {} };
   for (const sec of L.sectors) {
-    const I = sec.intensity;
+    // intensity: dimmer and greyer toward 0, full colour at 1
+    const I = sec.intensity, sat = 12 + 36 * I;
     paint.tone[sec.topic] = {
-      old: hsla(sec.hue, 58 + 10 * I, 0.42 + 0.5 * I),
-      mid: hsla(sec.hue, 61 + 10 * I, 0.48 + 0.5 * I),
-      recent: hsla(sec.hue, 66 + 8 * I, 0.6 + 0.4 * I),
+      old: hsla(sec.hue, 58 + 10 * I, 0.42 + 0.5 * I, sat),
+      mid: hsla(sec.hue, 61 + 10 * I, 0.48 + 0.5 * I, sat),
+      recent: hsla(sec.hue, 66 + 8 * I, 0.6 + 0.4 * I, sat + 6),
       today: hsla(sec.hue, 76, 0.97),
     };
   }
@@ -407,16 +408,39 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     const probs = view.problems.map(p => ({ ...p }));
     return strengthTone(f ? layout(probs.filter(p => topicOfProblem(p) === f), { ...opts, ...subtopicGroups(f) }) : layout(probs, opts), f);
   }
-  // Strength, quietly: a topic's dots are brighter the stronger you are there
-  // and more muted where you're weak. 45% or under is the most muted, 90% and
-  // up full; a rough guess sits in between. Without strength, brightness
-  // stays the layout's own (how many you've done).
+  // Strength, quietly: a topic's dots are brighter and more colourful the
+  // stronger you are there, dimmer and greyer where you're weak, RELATIVE TO
+  // YOUR OTHER TOPICS: your weakest is always the most muted, your strongest
+  // the brightest. On a mostly clean history every topic sits around 80–87%,
+  // and an absolute scale painted them all alike. Spread is measured in
+  // log-odds (85→90% is as big a step as 50→62%) with a floor, so topics a
+  // point or two apart aren't pulled to opposite ends. A rough guess sits in
+  // the middle; without strength, brightness stays the layout's own.
+  const MIN_SPREAD = 0.35;
+  const logit = (p) => Math.log(Math.max(1e-3, Math.min(1 - 1e-3, p)) / (1 - Math.max(1e-3, Math.min(1 - 1e-3, p))));
   function strengthTone(lay, fk) {
+    const sure = lay.sectors.map(sec => strengthIn(fk, sec.topic)).filter(v => v?.sure).map(v => logit(v.p));
+    const lo = Math.min(...sure), hi = Math.max(...sure);
+    const span = Math.max(MIN_SPREAD, hi - lo), mid = (lo + hi) / 2;
     for (const sec of lay.sectors) {
       const v = strengthIn(fk, sec.topic);
-      if (v) sec.intensity = v.sure ? Math.min(1, Math.max(0.08, (v.p - 0.45) / 0.45)) : 0.5;
+      if (!v) continue;
+      sec.intensity = v.sure && sure.length > 1
+        ? 0.08 + 0.92 * Math.min(1, Math.max(0, (logit(v.p) - (mid - span / 2)) / span))
+        : 0.5;
     }
     return lay;
+  }
+  // "your weakest", "2nd strongest"… among the arcs on screen, for the label card
+  function strengthRank(fk, key) {
+    const keys = (L?.sectors || []).map(sec => sec.topic).filter(k => strengthIn(fk, k)?.sure);
+    if (keys.length < 4 || !keys.includes(key)) return null;
+    const order = keys.sort((a, b) => strengthIn(fk, a).p - strengthIn(fk, b).p);
+    const i = order.indexOf(key), n = order.length, what = fk ? 'subtopic' : 'topic';
+    const nth = (k) => (k === 0 ? '' : `${['2nd', '3rd'][k - 1]} `);
+    if (i < 3) return `your ${nth(i)}weakest ${what}`;
+    if (n - 1 - i < 3) return `your ${nth(n - 1 - i)}strongest ${what}`;
+    return null;
   }
   function relayout() {
     morph = null;
@@ -1006,6 +1030,13 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       : v.sure ? `${Math.round(v.p * 100)}% chance on a typical Medium · from ${v.n} you've tried`
       : `about ${Math.round(v.p * 100)}% on a typical Medium · a rough guess, ${v.n ? `only ${v.n}` : 'none'} tried`;
     tip.appendChild(str);
+    const rank = v?.sure && strengthRank(focus, sec.topic);
+    if (rank) {
+      const rk = document.createElement('div');
+      rk.className = 'tip-from';
+      rk.textContent = rank;
+      tip.appendChild(rk);
+    }
     const hint = document.createElement('div');
     hint.className = 'tip-also';
     hint.textContent = focus ? 'click for a problem to try' : 'click to see its subtopics';
