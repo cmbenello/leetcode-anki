@@ -9,16 +9,14 @@
 //   links      "built on" links bow inward inside their topic; links between
 //              topics are bundled through the middle (Holten, "Hierarchical
 //              Edge Bundles", 2006), kept faint
-//   dots       colour = topic (brighter where you've done more); a touch
+//   dots       colour = topic, brighter where you're stronger (see strength); a touch
 //              brighter if recent
 //
 //   phases     pick a prep phase below the graph to light up just the problems
 //              first solved in it; the rest fade back but keep their places
-//   strength   a soft pastel glow just outside each topic, the same glow that
-//              lights a picked phase: bright where you're strong, barely there
-//              where you're weak (lib/strength.js — how cleanly you solve, not
-//              how often). Brightness, not length, so it never reads as how
-//              many; grey while there's too little to go on
+//   strength   no extra marks: a topic's dots are brighter the stronger you are
+//              there and more muted where you're weak (lib/strength.js — how
+//              cleanly you solve, not how often). Hover a label for the number
 //   subtopics  click a topic's label to open it: its problems slide round to
 //              fill the circle, split by subtopic (lib/subtopics.js), each with
 //              its own strength. Esc or "all topics" goes back; click a
@@ -281,11 +279,13 @@ export function layout(problems, {
     (c.b.cross ||= []).push(c.a);
   }
 
-  // the strength glow just past the outer ring, and the label past that
-  const gaugeR = rings[2] + 11 * Math.sqrt(scale);
-  for (const sec of Object.values(sectors)) sec.labelR = gaugeR + 14 * Math.sqrt(scale);
+  // topic labels just past the outermost dot of the topic
+  for (const sec of Object.values(sectors)) {
+    const outer = sec.nodes.reduce((m, nd) => Math.max(m, nd.r), rings[2]);
+    sec.labelR = outer + 18 * Math.sqrt(scale);
+  }
 
-  return { cx, cy, R, r0, n, target, nodes, scale, rings, gaugeR, crossLinks, sectors: Object.values(sectors) };
+  return { cx, cy, R, r0, n, target, nodes, scale, rings, crossLinks, sectors: Object.values(sectors) };
 }
 
 // "built on" links bow inward along the topic; cross-topic links bundle
@@ -405,7 +405,18 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     if (!view) return layout([], { width: W, height: H, target: 1 });
     const opts = { width: W, height: H, target: view.progress.target, now: view.now };
     const probs = view.problems.map(p => ({ ...p }));
-    return f ? layout(probs.filter(p => topicOfProblem(p) === f), { ...opts, ...subtopicGroups(f) }) : layout(probs, opts);
+    return strengthTone(f ? layout(probs.filter(p => topicOfProblem(p) === f), { ...opts, ...subtopicGroups(f) }) : layout(probs, opts), f);
+  }
+  // Strength, quietly: a topic's dots are brighter the stronger you are there
+  // and more muted where you're weak. 45% or under is the most muted, 90% and
+  // up full; a rough guess sits in between. Without strength, brightness
+  // stays the layout's own (how many you've done).
+  function strengthTone(lay, fk) {
+    for (const sec of lay.sectors) {
+      const v = strengthIn(fk, sec.topic);
+      if (v) sec.intensity = v.sure ? Math.min(1, Math.max(0.08, (v.p - 0.45) / 0.45)) : 0.5;
+    }
+    return lay;
   }
   function relayout() {
     morph = null;
@@ -593,7 +604,6 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       ctx.fill();
     }
 
-    drawGauges(ctx, L, focus, 1);
     drawLabels(ctx, L, focus, 1, true);
   }
 
@@ -604,41 +614,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     return Math.max(0, t);
   }
 
-  // Strength as light: a soft pastel glow along each arc, just outside the
-  // ring, in the arc's own hue: the more likely you are to solve a typical
-  // Medium there, the brighter it glows (40% and under: nearly dark; 95%:
-  // full). Only the blur is drawn, never a hard line: the stroke itself goes
-  // far off-canvas and its shadow is offset back into place. A rough guess
-  // glows a faint grey. Hovering a label lifts its glow.
-  const GLOW_LO = 0.4, GLOW_HI = 0.95, OFF = 20000;
-  function drawGauges(ctx, lay, fk, alpha) {
-    if (alpha < 0.01) return;
-    const { cx, cy } = lay, r = lay.gaugeR;
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineWidth = 5 / s;
-    ctx.shadowOffsetX = -OFF * s * dpr;              // shadows ignore the transform: device pixels
-    ctx.shadowBlur = 15 * dpr;
-    for (const sec of lay.sectors) {
-      const v = strengthIn(fk, sec.topic);
-      if (!v) continue;
-      const pad = Math.min(0.03, sec.span * 0.18), a0 = sec.start + pad, a1 = sec.start + sec.span - pad;
-      if (a1 <= a0) continue;
-      const f = Math.min(1, Math.max(0, (v.p - GLOW_LO) / (GLOW_HI - GLOW_LO)));
-      const lift = hoverLabel === sec.topic ? 1.35 : 1;
-      // steeper than linear, so a weak topic stays dark beside a strong one
-      const a = Math.min(1, alpha * lift * (v.sure ? 0.04 + 0.86 * f ** 1.5 : 0.14));
-      const col = v.sure ? `hsla(${sec.hue}, 62%, 76%, ${a.toFixed(3)})` : `rgba(206,210,217,${a.toFixed(3)})`;
-      ctx.shadowColor = col;
-      ctx.strokeStyle = col;
-      ctx.beginPath();
-      ctx.arc(cx + OFF, cy, r, a0, a1);
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  // Arc labels just outside the gauges, a constant size while zoomed. Each is
+  // Arc labels just outside the dots, a constant size while zoomed. Each is
   // a button: its box (canvas CSS px) is kept for hit-testing.
   function drawLabels(ctx, lay, fk, alpha, record) {
     if (record) labelBoxes = [];
@@ -723,12 +699,10 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       dot(x, y, rad, col(paint, mv.nd), e);
     }
     ctx.globalAlpha = 1;
-    // labels and gauges hand over without overlapping: the old ones are gone
+    // labels hand over without overlapping: the old ones are gone
     // before the new ones start to show
     const lout = 1 - Math.min(1, e * 2.5), lin = Math.max(0, (e - 0.55) / 0.45);
-    drawGauges(ctx, m.prev, m.prevFocus, lout);          // the old glows go out...
     drawLabels(ctx, m.prev, m.prevFocus, lout, false);
-    drawGauges(ctx, L, focus, lin);                      // ...and the new ones light up
     drawLabels(ctx, L, focus, lin, true);
     if (t >= 1) { morph = null; linksIn = performance.now(); }
     requestDraw();

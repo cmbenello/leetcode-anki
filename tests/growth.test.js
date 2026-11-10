@@ -151,7 +151,7 @@ test('an opened topic lays out its subtopics as the arcs, on the same rings', ()
   assert.ok(lca.alsoIn.includes('bst'), 'an LCA-in-a-BST problem links to the BST arc');
   const hues = L.sectors.map(s => s.hue);
   assert.ok(Math.max(...hues) - Math.min(...hues) <= 120, 'subtopic hues stay near the topic\'s own');
-  assert.ok(L.gaugeR > L.rings[2] && L.sectors.every(s => s.labelR > L.gaugeR), 'gauge between the outer ring and the labels');
+  assert.ok(L.sectors.every(s => s.labelR > L.rings[2]), 'labels outside the outer ring');
 });
 
 let failed = 0;
