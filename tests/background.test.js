@@ -344,6 +344,20 @@ test('rating 4 = felt hard: stored for the predictor, still a solve, never a lap
   assert.equal(g.perceived, 4, 'the Drill export carries it');
 });
 
+test('wrong submissions before Accepted are counted, for topic strength', async () => {
+  freshStore();
+  for (const [id, status] of [['701', 'Wrong Answer'], ['702', 'Time Limit Exceeded'], ['703', 'Accepted']]) {
+    await send({ kind: 'recordSubmission', slug: 'two-sum', title: 'Two Sum', url: URL_TS, status, submissionId: id, source: 'network' });
+  }
+  await send({ kind: 'dismissRating', slug: 'two-sum' });            // Esc on the card: kept, no review
+  const rows = (await send({ kind: 'exportDrill' })).jsonl.trim().split('\n').map(JSON.parse);
+  const r = rows.find(x => x.kind === 'ungraded-ac');
+  assert.equal(r.correct, 1);
+  assert.equal(r.fails, 2, 'two wrong tries before the Accepted');
+  const v = await send({ kind: 'getGoalView', id: null });
+  assert.ok(v.strength?.topics?.arrays, 'the view carries topic strength');
+});
+
 // ---- prep phases ----
 const solvedOn = (slug, d, id) => ({ slug, title: slug, site: 'leetcode', reps: 1, lapses: 0, due: Date.now() + 864e5,
   history: [{ t: d.getTime(), q: 4 }], submissions: [{ t: d.getTime(), status: 'Accepted', id }] });

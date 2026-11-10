@@ -3,23 +3,42 @@
 // Strength = the chance you'd solve a typical Medium there: the predictor's
 // pBase (lib/model.js) averaged over the catalog's free Medium problems in
 // that topic (a bucket with fewer than MIN_MEDIUMS Mediums averages over all
-// its problems). It uses the model's own Elo, partial credit for how hard a
-// solve felt included, but each attempt counts toward its topic (or
-// subtopic) alone rather than its LeetCode tags: tags like "array" and
-// "dynamic-programming" are shared across topics, and per-tag ability blurred
-// a topic you keep failing into its neighbours (a simulated weak topic came
-// out 69% against 70–78% elsewhere; per topic, 47–74% against 77–87%).
+// its problems). It uses the model's own Elo, with two changes:
+//
+//   * each attempt counts toward its topic (or subtopic) alone rather than
+//     its LeetCode tags: tags like "array" and "dynamic-programming" are
+//     shared across topics, and per-tag ability blurred a topic you keep
+//     failing into its neighbours (a simulated weak topic came out 69%
+//     against 70–78% elsewhere; per topic, 47–74% against 77–87%);
+//   * a solve earns credit for how CLEANLY it went (cleanScore): full on the
+//     first try, less for each wrong submission before Accepted, less if it
+//     felt hard or took hints. When every Accepted is a full win, Elo just
+//     climbs with every solve and strength becomes a count: 40 solves that
+//     each needed retries beat 10 first-try solves (90% vs 84%). With credit,
+//     ability settles where your expected score matches how cleanly you
+//     solve: 80% vs 83%, while 40 clean solves still come out on top (88%).
 // `n` is how many problems there you've attempted; under CONFIDENT_N the
 // number is mostly the prior, and the graph shows it as a rough guess.
 // Pure: tested in tests/strength.test.js.
 
-import { replay, pBase } from './model.js';
+import { replay, pBase, perceivedScore } from './model.js';
 
 export const MIN_MEDIUMS = 3;
 export const CONFIDENT_N = 3;
+// credit for an Accepted after 0, 1, 2, 3+ wrong submissions
+export const FAIL_CREDIT = Object.freeze([1, 0.8, 0.65, 0.5]);
+export const HINT_CREDIT = 0.85;
+
+/** How cleanly an attempt went, in [0, 1]: the lower of tries and felt difficulty, less for hints. */
+export function cleanScore(a) {
+  if (!a.correct) return 0;
+  const tries = FAIL_CREDIT[Math.min(Math.max(0, a.fails ?? 0), FAIL_CREDIT.length - 1)];
+  const felt = a.perceived != null ? perceivedScore(a.perceived) : 1;
+  return Math.min(tries, felt) * (a.hints ? HINT_CREDIT : 1);
+}
 
 /**
- * attempts: the model's attempts [{ slug, ts, correct, score?, tags }]
+ * attempts: the model's attempts [{ slug, ts, correct, tags, fails?, perceived?, hints? }]
  * items:    { [slug]: { acRate, difficulty } } for difficulty priors
  * rows:     catalog items [{ slug, tags, difficulty, paid }]
  * topicOf(x) → topic key, subOf(topic, x) → subtopic key (x has slug + tags)
@@ -27,8 +46,9 @@ export const CONFIDENT_N = 3;
  */
 export function topicStrength({ attempts = [], items = {}, rows, topicOf, subOf }) {
   const keysOf = (x) => { const t = topicOf(x); return [t, `${t}/${subOf(t, x)}`]; };
-  const byTopic = replay(attempts.map(a => ({ ...a, tags: [keysOf(a)[0]] })), items);
-  const bySub = replay(attempts.map(a => ({ ...a, tags: [keysOf(a)[1]] })), items);
+  const scored = attempts.map(a => ({ ...a, score: cleanScore(a) }));
+  const byTopic = replay(scored.map(a => ({ ...a, tags: [keysOf(a)[0]] })), items);
+  const bySub = replay(scored.map(a => ({ ...a, tags: [keysOf(a)[1]] })), items);
 
   const acc = new Map();
   const add = (key, p, medium) => {

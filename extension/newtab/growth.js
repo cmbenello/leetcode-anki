@@ -14,9 +14,11 @@
 //
 //   phases     pick a prep phase below the graph to light up just the problems
 //              first solved in it; the rest fade back but keep their places
-//   strength   the thin arc just outside each topic fills with how likely you
-//              are to solve a typical Medium there (lib/strength.js); dashed
-//              while there's too little to go on
+//   strength   a short bar sticking out past each topic, the same full length
+//              for every topic so it doesn't read as how many you've done: it
+//              fills with how likely you are to solve a typical Medium there
+//              (lib/strength.js — how cleanly you solve, not how often);
+//              dotted while there's too little to go on
 //   subtopics  click a topic's label to open it: its problems slide round to
 //              fill the circle, split by subtopic (lib/subtopics.js), each with
 //              its own strength. Esc or "all topics" goes back; click a
@@ -134,7 +136,7 @@ export function layout(problems, {
   groups = TOPIC_GROUPS, groupOf = topicOfProblem, alsoOf = alsoTopics,
 }) {
   const cx = width / 2, cy = height / 2;
-  const R = height / 2 - 52;
+  const R = height / 2 - 60;                                  // room outside for strength bars + labels
   const r0 = Math.max(80, height * 0.11);                      // room for the goal text
   const n = problems.length;
   const scale = Math.max(1, Math.min(1.8, R / 254));
@@ -279,11 +281,13 @@ export function layout(problems, {
     (c.b.cross ||= []).push(c.a);
   }
 
-  // the strength gauge just past the outer ring, and the label past that
-  const gaugeR = rings[2] + 10 * Math.sqrt(scale);
-  for (const sec of Object.values(sectors)) sec.labelR = gaugeR + 14 * Math.sqrt(scale);
+  // strength bars start just past the outer ring, all the same full length;
+  // labels sit past their tips
+  const gaugeR = rings[2] + 8 * Math.sqrt(scale);
+  const barLen = 20 * Math.sqrt(scale);
+  for (const sec of Object.values(sectors)) sec.labelR = gaugeR + barLen + 9 * Math.sqrt(scale);
 
-  return { cx, cy, R, r0, n, target, nodes, scale, rings, gaugeR, crossLinks, sectors: Object.values(sectors) };
+  return { cx, cy, R, r0, n, target, nodes, scale, rings, gaugeR, barLen, crossLinks, sectors: Object.values(sectors) };
 }
 
 // "built on" links bow inward along the topic; cross-topic links bundle
@@ -602,27 +606,32 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     return Math.max(0, t);
   }
 
-  // Strength: a faint track along each arc, filled in the arc's colour as far
-  // as your chance on a typical Medium there. Dotted while it's mostly guesswork.
-  function drawGauges(ctx, lay, fk, alpha) {
+  // Strength: one bar per arc, pointing out from the ring at the arc's middle.
+  // Every bar has the same full length (and a faint track to show it), so a
+  // small topic reads as clearly as a big one and the bar never says "how
+  // many". It fills from 30% (empty) to 100% (full), brighter as it grows;
+  // dotted while it's mostly guesswork. `grow` lets bars grow out of the ring
+  // as a topic opens. Arcs too small for a label get no bar either.
+  const BAR_FLOOR = 0.3;
+  function drawGauges(ctx, lay, fk, alpha, grow = 1) {
     if (alpha < 0.01) return;
-    const { cx, cy } = lay, r = lay.gaugeR;
+    const { cx, cy } = lay, r0 = lay.gaugeR;
     ctx.save();
     ctx.lineCap = 'round';
-    ctx.lineWidth = 2.4 / s;
     for (const sec of lay.sectors) {
+      if (sec.span < 0.12) continue;
       const v = strengthIn(fk, sec.topic);
       if (!v) continue;
-      const pad = Math.min(0.012, sec.span * 0.1), a0 = sec.start + pad, a1 = sec.start + sec.span - pad;
-      if (a1 <= a0) continue;
-      const on = hoverLabel === sec.topic;
+      const on = hoverLabel === sec.topic, c = Math.cos(sec.mid), sn = Math.sin(sec.mid);
+      const full = lay.barLen * grow, f = Math.min(1, Math.max(0.06, (v.p - BAR_FLOOR) / (1 - BAR_FLOOR)));
       ctx.globalAlpha = alpha;
+      ctx.lineWidth = 3.2 / s;
       ctx.setLineDash([]);
-      ctx.strokeStyle = 'rgba(206,210,217,0.08)';
-      ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1); ctx.stroke();
-      ctx.setLineDash(v.sure ? [] : [1.5 / s, 4 / s]);
-      ctx.strokeStyle = hsla(sec.hue, on ? 80 : 72, !v.sure ? 0.5 : on ? 1 : 0.85);
-      ctx.beginPath(); ctx.arc(cx, cy, r, a0, a0 + (a1 - a0) * Math.max(0.02, Math.min(1, v.p))); ctx.stroke();
+      ctx.strokeStyle = 'rgba(206,210,217,0.14)';
+      ctx.beginPath(); ctx.moveTo(cx + c * r0, cy + sn * r0); ctx.lineTo(cx + c * (r0 + full), cy + sn * (r0 + full)); ctx.stroke();
+      ctx.setLineDash(v.sure ? [] : [1.6 / s, 3.6 / s]);
+      ctx.strokeStyle = hsla(sec.hue, on ? 82 : 60 + 18 * f, !v.sure ? 0.5 : on ? 1 : 0.55 + 0.4 * f);
+      ctx.beginPath(); ctx.moveTo(cx + c * r0, cy + sn * r0); ctx.lineTo(cx + c * (r0 + full * f), cy + sn * (r0 + full * f)); ctx.stroke();
     }
     ctx.restore();
   }
@@ -715,9 +724,9 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     // labels and gauges hand over without overlapping: the old ones are gone
     // before the new ones start to show
     const lout = 1 - Math.min(1, e * 2.5), lin = Math.max(0, (e - 0.55) / 0.45);
-    drawGauges(ctx, m.prev, m.prevFocus, lout);
+    drawGauges(ctx, m.prev, m.prevFocus, lout, lout);    // old bars sink back into the ring...
     drawLabels(ctx, m.prev, m.prevFocus, lout, false);
-    drawGauges(ctx, L, focus, lin);
+    drawGauges(ctx, L, focus, Math.min(1, lin * 1.5), lin);   // ...and the new ones grow out of it
     drawLabels(ctx, L, focus, lin, true);
     if (t >= 1) { morph = null; linksIn = performance.now(); }
     requestDraw();

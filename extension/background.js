@@ -887,7 +887,9 @@ function cardsToAttempts(cards, metaAll) {
                  seconds: h.durationMs ? h.durationMs / 1000 : null, verdict: h.submission?.status ?? null,
                  factors: h.factors ?? null, kind: 'graded',
                  // how hard it felt: a solve rated 4 is weaker evidence than one rated 1
-                 perceived: h.perceived ?? null, score: correct ? perceivedScore(h.perceived) : 0 });
+                 perceived: h.perceived ?? null, score: correct ? perceivedScore(h.perceived) : 0,
+                 // how cleanly: wrong submissions before Accepted, hints opened (topic strength uses these)
+                 fails: h.factors?.failsBeforeAc ?? null, hints: h.factors?.hints ?? 0 });
     }
     // NeetCode completions have no time: they can't join a submission session,
     // but they ARE evidence you solved it. Count one solve, placed at the very
@@ -906,9 +908,11 @@ function cardsToAttempts(cards, metaAll) {
       const start = group[0].t, end = group[group.length - 1].t;
       const graded = hist.some(h => h.t >= start - 5 * 60e3 && h.t <= end + 6 * 3600e3);
       if (!graded) {
-        const ac = group.some(g => /accepted/i.test(g.status));
+        const firstAc = group.findIndex(g => /accepted/i.test(g.status));
+        const ac = firstAc >= 0;
         out.push({ slug: c.slug, ts: end, correct: ac ? 1 : 0, tags, pPred: null, seconds: null,
-                   verdict: group[group.length - 1].status, factors: null, kind: ac ? 'ungraded-ac' : 'abandoned' });
+                   verdict: group[group.length - 1].status, factors: null, kind: ac ? 'ungraded-ac' : 'abandoned',
+                   fails: ac ? firstAc : group.length });
       }
       group = [];
     };
@@ -1485,6 +1489,7 @@ async function drillAttemptsJsonl() {
     p_pred: a.pPred, n_pass: null, n_tests: null, verdict: a.verdict, seconds: a.seconds,
     code: '', phase: 'practice', kind: a.kind, concepts: a.tags, factors: a.factors,
     perceived: a.perceived ?? null,             // 1 easy … 4 hard, from the rating card
+    fails: a.fails ?? null,                     // wrong submissions before Accepted (topic strength uses it)
     // what the extension's difficulty prior was built from, so Drill's prior
     // check doesn't have to re-fetch today's (drifted) acceptance rates
     difficulty: metaAll[a.slug]?.difficulty ?? cat.bySlug[a.slug]?.difficulty ?? null,

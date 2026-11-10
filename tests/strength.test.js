@@ -1,7 +1,7 @@
 // Run with:  node tests/strength.test.js
 // Topic strength: the predictor's chance on a typical Medium, per topic and subtopic.
 import assert from 'node:assert/strict';
-import { topicStrength, CONFIDENT_N } from '../extension/lib/strength.js';
+import { topicStrength, cleanScore, CONFIDENT_N } from '../extension/lib/strength.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -47,9 +47,28 @@ test('subtopics move on their own evidence', () => {
 
 test('a hard-felt solve counts for less than an easy one (partial credit)', () => {
   const easy = [], hard = [];
-  for (let i = 0; i < 6; i++) { easy.push(att(`tree-${i}`, i, 1, { score: 1 })); hard.push(att(`tree-${i}`, i, 1, { score: 0.55 })); }
+  for (let i = 0; i < 6; i++) { easy.push(att(`tree-${i}`, i, 1, { perceived: 1 })); hard.push(att(`tree-${i}`, i, 1, { perceived: 4 })); }
   const a = topicStrength({ attempts: easy, items, rows, topicOf, subOf }), b = topicStrength({ attempts: hard, items, rows, topicOf, subOf });
   assert.ok(a.topics.trees.p > b.topics.trees.p);
+});
+
+test('cleanScore: first try is full credit; retries, a hard feel and hints take some off', () => {
+  assert.equal(cleanScore({ correct: 1 }), 1);
+  assert.equal(cleanScore({ correct: 1, fails: 0 }), 1);
+  assert.ok(cleanScore({ correct: 1, fails: 1 }) < 1);
+  assert.ok(cleanScore({ correct: 1, fails: 3 }) < cleanScore({ correct: 1, fails: 1 }));
+  assert.equal(cleanScore({ correct: 1, fails: 9 }), cleanScore({ correct: 1, fails: 3 }), 'capped');
+  assert.ok(cleanScore({ correct: 1, perceived: 4 }) < cleanScore({ correct: 1, perceived: 1 }));
+  assert.ok(cleanScore({ correct: 1, hints: 2 }) < 1);
+  assert.equal(cleanScore({ correct: 0, fails: 0 }), 0);
+});
+
+test('strength is about how cleanly, not how many: 10 first-try solves beat 30 that each needed retries', () => {
+  const attempts = [];
+  for (let i = 0; i < 10; i++) attempts.push(att(`tree-${i}`, i, 1, { fails: 0 }));
+  for (let i = 0; i < 30; i++) attempts.push(att(`graph-${i % 40}`, 20 + i, 1, { fails: 2 }));
+  const s = topicStrength({ attempts, items, rows, topicOf, subOf });
+  assert.ok(s.topics.trees.p > s.topics.graphs.p, `clean ${s.topics.trees.p} vs many ${s.topics.graphs.p}`);
 });
 
 test('premium problems are left out', () => {
