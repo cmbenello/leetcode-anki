@@ -18,6 +18,8 @@ import { fetchQuestionMeta, fetchCatalog } from './lib/leetcode-api.js';
 import { sanitizeCards } from './lib/cards.js';
 import { validatePhases, normalizePhases, phasesFor, phaseSummary } from './lib/phases.js';
 import { primaryTopic, topicTags } from './lib/topics.js';
+import { subtopicOf, subtopicTags } from './lib/subtopics.js';
+import { topicStrength } from './lib/strength.js';
 
 const LANG_EXT = {
   python: 'py', python3: 'py',
@@ -158,7 +160,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
         case 'getRecommendations': {
-          sendResponse(await getRecommendations(msg.id, msg.k, msg.topic || null));
+          sendResponse(await getRecommendations(msg.id, msg.k, msg.topic || null, msg.sub || null));
           break;
         }
         case 'getPhases': {
@@ -1274,10 +1276,26 @@ async function getGoalView(id) {
     delete p.solveTimes;
   }
   const progress = goal ? goalProgress(goal, all) : { done: all.length, target: Math.max(all.length, 1), pct: 1 };
-  return { ok: true, goal, progress, problems, phases: phaseSummary(phases, problems), now: Date.now() };
+  return { ok: true, goal, progress, problems, phases: phaseSummary(phases, problems), strength: await strengthView(nc), now: Date.now() };
 }
 
-async function getRecommendations(id, k = 5, topic = null) {
+// How strong you are per topic and subtopic (lib/strength.js). It's about
+// you, not the goal, and the graph still draws without it if it fails.
+async function strengthView(nc) {
+  try {
+    const { attempts, cat, known } = await learnerState();
+    const topicOf = (x) => primaryTopic(x.tags || [], nc.bySlug[x.slug]?.p);
+    return topicStrength({
+      attempts, items: { ...cat.bySlug, ...known }, rows: cat.rows,
+      topicOf, subOf: (t, x) => subtopicOf(t, x.tags || []),
+    });
+  } catch (e) {
+    console.warn('[lcanki] strength', e);
+    return null;
+  }
+}
+
+async function getRecommendations(id, k = 5, topic = null, sub = null) {
   ensureCatalog();                                   // refresh in the background if stale
   const { st, attempts, known, cat } = await learnerState();
   const nc = await neetcodeIndex();
@@ -1288,16 +1306,18 @@ async function getRecommendations(id, k = 5, topic = null) {
   // A topic (clicked on the graph) means problems on that arc only: within
   // the active goal when it still has some there, else from anywhere.
   const topicOfItem = (it) => primaryTopic(it.tags || [], nc.bySlug[it.slug]?.p);
-  const inTopic = topic ? (it) => topicOfItem(it) === topic : null;
-  if (topic) modelGoal = { tags: topicTags(topic), matches: goalMatch ? (it) => inTopic(it) && goalMatch(it) : inTopic };
+  // A subtopic (clicked on an opened topic) narrows it further.
+  const inTopic = topic ? (it) => topicOfItem(it) === topic && (!sub || subtopicOf(topic, it.tags || []) === sub) : null;
+  const wantTags = topic ? (sub ? subtopicTags(topic, sub) : topicTags(topic)) : null;
+  if (topic) modelGoal = { tags: wantTags, matches: goalMatch ? (it) => inTopic(it) && goalMatch(it) : inTopic };
   // Seeded per day + per attempt, so the list is stable until you do something.
-  const seed = [...`${todayKey()}:${attempts.length}:${id || ''}:${topic || ''}`].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7);
+  const seed = [...`${todayKey()}:${attempts.length}:${id || ''}:${topic || ''}:${sub || ''}`].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) | 0, 7);
   const kk = Math.min(10, k || 5);
   let recs = recommend({ st, catalog, known, rng: mulberry32(seed), goal: modelGoal, k: kk });
   if (topic) {
     recs = recs.filter(r => r.onGoal);
     if (!recs.length && goalMatch) {
-      recs = recommend({ st, catalog, known, rng: mulberry32(seed), goal: { tags: topicTags(topic), matches: inTopic }, k: kk }).filter(r => r.onGoal);
+      recs = recommend({ st, catalog, known, rng: mulberry32(seed), goal: { tags: wantTags, matches: inTopic }, k: kk }).filter(r => r.onGoal);
     }
   }
   return {

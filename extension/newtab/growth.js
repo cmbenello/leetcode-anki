@@ -14,18 +14,25 @@
 //
 //   phases     pick a prep phase below the graph to light up just the problems
 //              first solved in it; the rest fade back but keep their places
+//   strength   the thin arc just outside each topic fills with how likely you
+//              are to solve a typical Medium there (lib/strength.js); dashed
+//              while there's too little to go on
+//   subtopics  click a topic's label to open it: its problems slide round to
+//              fill the circle, split by subtopic (lib/subtopics.js), each with
+//              its own strength. Esc or "all topics" goes back; click a
+//              subtopic's label for a problem to try there
 //
 // Zoom with a pinch or ⌘/Ctrl+scroll, drag to pan, double-click to zoom in;
 // plain scrolling still scrolls the page. Geometry is built once per data
 // change into batched Path2D objects; zoom/pan only change the transform.
 
 import { TOPICS, primaryTopic, tagTopic } from '../lib/topics.js';
+import { subtopicOf, subtopicList, subtopicsMatching } from '../lib/subtopics.js';
 
 export { primaryTopic };
 const TAU = Math.PI * 2;
 
 // Circle order, labels and hues: NeetCode's roadmap (lib/topics.js).
-const DISPLAY = TOPICS.map(t => t.key);
 const LABEL = Object.fromEntries(TOPICS.map(t => [t.key, t.label]));
 const topicLabel = (t) => LABEL[t] || String(t).replace(/-/g, ' ');
 const TOPIC_HUE = Object.fromEntries(TOPICS.map(t => [t.key, t.hue]));
@@ -100,8 +107,32 @@ export function spread(ideal, g, lo, hi) {
   return out;
 }
 
-/** Pure layout: problems -> positioned nodes, rings, arcs, links. Exported for tests. */
-export function layout(problems, { size, width = size, height = size, target, now = Date.now() }) {
+// The arcs of the full graph: NeetCode's topics.
+const TOPIC_GROUPS = TOPICS.map(t => ({ key: t.key, label: t.label, hue: t.hue }));
+const topicOfProblem = (p) => primaryTopic(p.tags, p.pattern);
+const alsoTopics = (p) => (p.tags || []).map(tagTopic).filter(Boolean);
+
+/** An opened topic's arcs: its subtopics, in hues around the topic's own. */
+export function subtopicGroups(topic) {
+  const list = subtopicList(topic), n = list.length;
+  const base = TOPIC_HUE[topic] ?? 220, step = n > 1 ? Math.min(22, 120 / (n - 1)) : 0;
+  return {
+    groups: list.map((g, i) => ({ ...g, hue: (base + (i - (n - 1) / 2) * step + 360) % 360 })),
+    groupOf: (p) => subtopicOf(topic, p.tags || []),
+    alsoOf: (p) => subtopicsMatching(topic, p.tags || []),
+  };
+}
+
+/**
+ * Pure layout: problems -> positioned nodes, rings, arcs, links. Exported for
+ * tests. Arcs are topics unless `groups` says otherwise (an opened topic's
+ * subtopics): groupOf(p) picks a problem's arc, alsoOf(p) the other arcs it
+ * belongs to (for links between arcs).
+ */
+export function layout(problems, {
+  size, width = size, height = size, target, now = Date.now(),
+  groups = TOPIC_GROUPS, groupOf = topicOfProblem, alsoOf = alsoTopics,
+}) {
   const cx = width / 2, cy = height / 2;
   const R = height / 2 - 52;
   const r0 = Math.max(80, height * 0.11);                      // room for the goal text
@@ -117,11 +148,12 @@ export function layout(problems, { size, width = size, height = size, target, no
   // rest; a floor keeps small topics legible
   const counts = {}, perRingCount = {};
   for (const p of problems) {
-    p._topic = primaryTopic(p.tags, p.pattern);
+    p._topic = groupOf(p);
     counts[p._topic] = (counts[p._topic] || 0) + 1;
     (perRingCount[p._topic] ??= [0, 0, 0])[ringOf(p)] += 1;
   }
-  const present = DISPLAY.filter(t => counts[t]);
+  const GROUP = Object.fromEntries(groups.map(g => [g.key, g]));
+  const present = groups.map(g => g.key).filter(t => counts[t]);
   const maxCount = Math.max(1, ...present.map(t => counts[t]));
   const GAP = present.length > 1 ? 0.035 : 0;
   const usable = TAU - GAP * present.length;
@@ -132,8 +164,8 @@ export function layout(problems, { size, width = size, height = size, target, no
   present.forEach((t, i) => {
     const span = usable * (wts[i] / wsum);
     sectors[t] = {
-      topic: t, start: a, span, mid: a + span / 2, count: counts[t], nodes: [],
-      hue: TOPIC_HUE[t] ?? 220, intensity: 0.3 + 0.7 * Math.sqrt(counts[t] / maxCount),
+      topic: t, label: GROUP[t].label, start: a, span, mid: a + span / 2, count: counts[t], nodes: [],
+      hue: GROUP[t].hue ?? 220, intensity: 0.3 + 0.7 * Math.sqrt(counts[t] / maxCount),
     };
     a += span + GAP;
   });
@@ -229,10 +261,7 @@ export function layout(problems, { size, width = size, height = size, target, no
       if (q && q.sec !== nd.sec) picks.push({ q, score: 2 });
     }
     const own = new Set();
-    for (const t of nd.tags || []) {
-      const topic = tagTopic(t);
-      if (topic !== nd.sec && sectors[topic]) own.add(topic);
-    }
+    for (const topic of alsoOf(nd)) if (topic !== nd.sec && sectors[topic]) own.add(topic);
     if (own.size) nd.alsoIn = [...own];
     for (const topic of own) {
       let best = null, bs = 0.34;
@@ -250,13 +279,11 @@ export function layout(problems, { size, width = size, height = size, target, no
     (c.b.cross ||= []).push(c.a);
   }
 
-  // topic labels just past the outermost dot of the topic
-  for (const sec of Object.values(sectors)) {
-    const outer = sec.nodes.reduce((m, nd) => Math.max(m, nd.r), rings[2]);
-    sec.labelR = outer + 18 * Math.sqrt(scale);
-  }
+  // the strength gauge just past the outer ring, and the label past that
+  const gaugeR = rings[2] + 10 * Math.sqrt(scale);
+  for (const sec of Object.values(sectors)) sec.labelR = gaugeR + 14 * Math.sqrt(scale);
 
-  return { cx, cy, R, r0, n, target, nodes, scale, rings, crossLinks, sectors: Object.values(sectors) };
+  return { cx, cy, R, r0, n, target, nodes, scale, rings, gaugeR, crossLinks, sectors: Object.values(sectors) };
 }
 
 // "built on" links bow inward along the topic; cross-topic links bundle
@@ -325,6 +352,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
         <div class="growth-goal"></div>
         <div class="growth-count"><span class="growth-done">…</span><span class="growth-target"></span></div>
         <div class="growth-pace"></div>
+        <button type="button" class="growth-back" hidden>← all topics</button>
       </div>
       <div class="growth-zoom" hidden>
         <button type="button" data-z="in" title="Zoom in" aria-label="Zoom in">+</button>
@@ -342,7 +370,13 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
   const zoomUi = root.querySelector('.growth-zoom');
   const phaseBar = root.querySelector('.growth-phases');
   const sug = root.querySelector('.growth-suggest');
+  const backBtn = root.querySelector('.growth-back');
   let labelBoxes = [], hoverLabel = null, sugState = null;
+  // the opened topic (null = every topic), and the slide between the two
+  let focus = null, morph = null, linksIn = 0;
+  const MORPH_MS = 950, LINKS_IN_MS = 350;
+  const strengthIn = (fk, key) => (fk ? view?.strength?.subs?.[fk]?.[key] : view?.strength?.topics?.[key]) || null;
+  const secLabel = (key) => L?.sectors.find(x => x.topic === key)?.label || topicLabel(key);
   let L = null, paint = null, view = null, hover = null, W = 0, H = 0, dpr = 1;
   // the picked prep phase (null = all), remembered per browser
   let phase = null;
@@ -365,10 +399,15 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     canvas.style.height = `${H}px`;
     stage.style.height = `${H}px`;
   }
+  function layoutFor(f) {
+    if (!view) return layout([], { width: W, height: H, target: 1 });
+    const opts = { width: W, height: H, target: view.progress.target, now: view.now };
+    const probs = view.problems.map(p => ({ ...p }));
+    return f ? layout(probs.filter(p => topicOfProblem(p) === f), { ...opts, ...subtopicGroups(f) }) : layout(probs, opts);
+  }
   function relayout() {
-    L = view
-      ? layout(view.problems.map(p => ({ ...p })), { width: W, height: H, target: view.progress.target, now: view.now })
-      : layout([], { width: W, height: H, target: 1 });
+    morph = null;
+    L = layoutFor(focus);
     paint = buildPaint(L, phase);
     settleVisuals();
   }
@@ -443,14 +482,16 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     ctx.restore();
 
     ctx.lineCap = 'round';
+    if (morph) { drawMorph(ctx, k); return; }
+    const lf = linkFade();                       // links ease in once a slide lands
     if (anim) stepTransition();
     if (!phase && !anim) {
       // the plain view: everything batched
-      ctx.strokeStyle = 'rgba(206,210,217,0.06)';
+      ctx.strokeStyle = `rgba(206,210,217,${(0.06 * lf).toFixed(3)})`;
       ctx.lineWidth = 0.7 / k;
       ctx.stroke(paint.cross);
       ctx.lineWidth = 0.9 / k;
-      ctx.strokeStyle = 'rgba(206,210,217,0.2)';
+      ctx.strokeStyle = `rgba(206,210,217,${(0.2 * lf).toFixed(3)})`;
       ctx.stroke(paint.links);
       // dots: one fill per (topic, tone)
       for (const sec of L.sectors) {
@@ -474,7 +515,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       const strokeBuckets = (pairs, alphaOf, width) => {
         const buckets = new Map();
         for (const [a, b] of pairs) {
-          const al = Math.round(alphaOf(a, b) * 200) / 200;
+          const al = Math.round(alphaOf(a, b) * lf * 200) / 200;
           if (al < 0.005) continue;
           let p = buckets.get(al);
           if (!p) buckets.set(al, p = new Path2D());
@@ -532,6 +573,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       ctx.globalAlpha = 1;
       if (anim) requestDraw();                   // next frame of the transition
     }
+    if (lf < 1) requestDraw();
 
     if (hover) {
       // light this problem's links: what it built on, what built on it, and
@@ -549,21 +591,61 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       ctx.fill();
     }
 
-    // topic labels just outside each topic's dots, a constant size while zoomed
+    drawGauges(ctx, L, focus, 1);
+    drawLabels(ctx, L, focus, 1, true);
+  }
+
+  function linkFade() {
+    if (!linksIn) return 1;
+    const t = (performance.now() - linksIn) / LINKS_IN_MS;
+    if (t >= 1) { linksIn = 0; return 1; }
+    return Math.max(0, t);
+  }
+
+  // Strength: a faint track along each arc, filled in the arc's colour as far
+  // as your chance on a typical Medium there. Dotted while it's mostly guesswork.
+  function drawGauges(ctx, lay, fk, alpha) {
+    if (alpha < 0.01) return;
+    const { cx, cy } = lay, r = lay.gaugeR;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 2.4 / s;
+    for (const sec of lay.sectors) {
+      const v = strengthIn(fk, sec.topic);
+      if (!v) continue;
+      const pad = Math.min(0.012, sec.span * 0.1), a0 = sec.start + pad, a1 = sec.start + sec.span - pad;
+      if (a1 <= a0) continue;
+      const on = hoverLabel === sec.topic;
+      ctx.globalAlpha = alpha;
+      ctx.setLineDash([]);
+      ctx.strokeStyle = 'rgba(206,210,217,0.08)';
+      ctx.beginPath(); ctx.arc(cx, cy, r, a0, a1); ctx.stroke();
+      ctx.setLineDash(v.sure ? [] : [1.5 / s, 4 / s]);
+      ctx.strokeStyle = hsla(sec.hue, on ? 80 : 72, !v.sure ? 0.5 : on ? 1 : 0.85);
+      ctx.beginPath(); ctx.arc(cx, cy, r, a0, a0 + (a1 - a0) * Math.max(0.02, Math.min(1, v.p))); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Arc labels just outside the gauges, a constant size while zoomed. Each is
+  // a button: its box (canvas CSS px) is kept for hit-testing.
+  function drawLabels(ctx, lay, fk, alpha, record) {
+    if (record) labelBoxes = [];
+    if (alpha < 0.01) return;
+    const { cx, cy } = lay;
     ctx.font = `${12.5 / s}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     ctx.textBaseline = 'middle';
-    // each label is a button: its box (canvas CSS px) is kept for hit-testing
-    labelBoxes = [];
-    for (const sec of L.sectors) {
+    for (const sec of lay.sectors) {
       if (sec.span < 0.12) continue;
       const lx = cx + Math.cos(sec.mid) * sec.labelR, ly = cy + Math.sin(sec.mid) * sec.labelR;
       const align = Math.abs(Math.cos(sec.mid)) < 0.3 ? 'center' : Math.cos(sec.mid) > 0 ? 'left' : 'right';
-      const text = `${topicLabel(sec.topic)} ${phase ? sec.inCount : sec.count}`;
+      const text = `${sec.label} ${phase ? sec.inCount : sec.count}`;
       ctx.textAlign = align;
-      const on = hoverLabel === sec.topic || sugState?.topic === sec.topic;
+      const on = record && (hoverLabel === sec.topic || sugState?.sub === sec.topic);
       ctx.fillStyle = on ? COLORS.hi : COLORS.label;
-      ctx.globalAlpha = phase && !sec.inCount && !on ? 0.35 : 1;
+      ctx.globalAlpha = alpha * (phase && !sec.inCount && !on ? 0.35 : 1);
       ctx.fillText(text, lx, ly);
+      if (!record) continue;
       const w = ctx.measureText(text).width * s, sx = tx + lx * s, sy = ty + ly * s;
       const x0 = align === 'left' ? sx : align === 'right' ? sx - w : sx - w / 2;
       labelBoxes.push({ sec, x0: x0 - 6, x1: x0 + w + 6, y0: sy - 11, y1: sy + 11 });
@@ -571,9 +653,91 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     ctx.globalAlpha = 1;
   }
 
+  // ------------------------------------------------- opening a topic ----
+  // The topic's problems slide along their own difficulty rings (same radii
+  // in both views) to fill the circle, re-coloured by subtopic; the rest fade
+  // out where they are. Going back runs the same slide the other way.
+  function setFocus(f) {
+    if (f === focus || !view) return;
+    const prev = L, prevPaint = paint, prevFocus = focus;
+    focus = f;
+    closeSuggest();
+    clearHover();
+    s = 1; tx = 0; ty = 0; setZoomed();
+    L = layoutFor(focus);
+    paint = buildPaint(L, phase);
+    settleVisuals();
+    backBtn.hidden = !focus;
+    placeHub();
+    setHub();
+    renderPhases();
+    if (reducedMotion || !prev) { requestDraw(); return; }
+    const old = new Map(prev.nodes.map(nd => [nd.slug, nd]));
+    const moving = [], incoming = [];
+    for (const nd of L.nodes) {
+      const o = old.get(nd.slug);
+      if (!o) { incoming.push(nd); continue; }
+      old.delete(nd.slug);
+      let a1 = nd.ang;                           // the short way round
+      while (a1 - o.ang > Math.PI) a1 -= TAU;
+      while (a1 - o.ang < -Math.PI) a1 += TAU;
+      moving.push({ nd, o, a0: o.ang, a1, r0: o.r, r1: nd.r });
+    }
+    morph = { start: performance.now(), ms: MORPH_MS, moving, incoming, outgoing: [...old.values()], prev, paint: prevPaint, prevFocus };
+    requestDraw();
+  }
+  function drawMorph(ctx, k) {
+    const m = morph;
+    const t = Math.min(1, (performance.now() - m.start) / m.ms);
+    const e = (1 - Math.cos(Math.PI * t)) / 2;
+    const { cx, cy } = L;
+    const GREY = 'rgba(206,210,217,0.09)';
+    const col = (pt, nd) => (nd.inPhase ? pt.tone[nd.sec][nd.tone] : GREY);
+    const dot = (x, y, r, color, alpha) => {
+      if (alpha < 0.004) return;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, TAU);
+      ctx.fill();
+    };
+    const out = 1 - Math.min(1, e * 1.8), inn = Math.max(0, (e - 0.45) / 0.55);
+    for (const nd of m.outgoing) dot(nd.x, nd.y, nd.dot / k, col(m.paint, nd), out);
+    for (const nd of m.incoming) dot(nd.x, nd.y, nd.dot / k, col(paint, nd), inn);
+    for (const mv of m.moving) {
+      const ang = mv.a0 + (mv.a1 - mv.a0) * e, r = mv.r0 + (mv.r1 - mv.r0) * e;
+      const x = cx + Math.cos(ang) * r, y = cy + Math.sin(ang) * r;
+      const rad = (mv.o.dot + (mv.nd.dot - mv.o.dot) * e) / k;
+      dot(x, y, rad, col(m.paint, mv.o), 1 - e);
+      dot(x, y, rad, col(paint, mv.nd), e);
+    }
+    ctx.globalAlpha = 1;
+    // labels and gauges hand over without overlapping: the old ones are gone
+    // before the new ones start to show
+    const lout = 1 - Math.min(1, e * 2.5), lin = Math.max(0, (e - 0.55) / 0.45);
+    drawGauges(ctx, m.prev, m.prevFocus, lout);
+    drawLabels(ctx, m.prev, m.prevFocus, lout, false);
+    drawGauges(ctx, L, focus, lin);
+    drawLabels(ctx, L, focus, lin, true);
+    if (t >= 1) { morph = null; linksIn = performance.now(); }
+    requestDraw();
+  }
+  backBtn.addEventListener('click', () => setFocus(null));
+
   const fmtDay = (d) => new Date(`${d}T12:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   function setHub() {
     const ph = phase && phaseInfo(phase);
+    if (focus) {
+      // an opened topic: its name, how many you've solved there, how strong you are
+      const v = strengthIn(null, focus);
+      root.querySelector('.growth-goal').textContent = ph ? `${topicLabel(focus)} · ${ph.name}` : topicLabel(focus);
+      root.querySelector('.growth-done').textContent = ph ? L.nodes.reduce((n, nd) => n + (nd.inPhase ? 1 : 0), 0) : L.nodes.length;
+      root.querySelector('.growth-target').textContent = '';
+      root.querySelector('.growth-pace').textContent = v
+        ? `${Math.round(v.p * 100)}% on a typical Medium${v.sure ? '' : ' (rough guess)'}`
+        : 'problems solved';
+      return;
+    }
     if (ph) {
       root.querySelector('.growth-goal').textContent = ph.name;
       root.querySelector('.growth-done').textContent = ph.count;
@@ -599,10 +763,13 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
   // ------------------------------------------------------------ phases ----
   function renderPhases() {
     const list = view?.phases || [];
-    const stars = starCount();
     phaseBar.textContent = '';
-    phaseBar.hidden = !list.some(p => p.id !== 'unstructured') && !stars;
+    phaseBar.hidden = !list.some(p => p.id !== 'unstructured') && !starCount();
     if (phaseBar.hidden) return;
+    // counts are for what's on screen: an opened topic counts only its own
+    const probs = focus ? view.problems.filter(p => topicOfProblem(p) === focus) : view.problems;
+    const countIn = (id) => probs.reduce((n, p) => n + ((p.phases || [p.phase]).includes(id) ? 1 : 0), 0);
+    const stars = probs.reduce((n, p) => n + (p.starred ? 1 : 0), 0);
     const tab = (id, name, count) => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -615,10 +782,12 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       b.addEventListener('click', () => setPhase(phase === id || id == null ? null : id));
       phaseBar.appendChild(b);
     };
-    tab(null, 'All', view.problems.length);
-    if (stars) tab(STAR, '★ Starred', stars);
+    tab(null, 'All', probs.length);
+    if (stars || phase === STAR) tab(STAR, '★ Starred', stars);
     // empty phases (nothing solved then, or nothing on this goal) stay out of the way
-    if (list.some(p => p.id !== 'unstructured')) for (const p of list) if (p.count || phase === p.id) tab(p.id, p.name, p.count);
+    if (list.some(p => p.id !== 'unstructured')) {
+      for (const p of list) { const c = focus ? countIn(p.id) : p.count; if (c || phase === p.id) tab(p.id, p.name, c); }
+    }
   }
   function setPhase(id) {
     const between = !!(phase && id);
@@ -667,7 +836,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     const d = Math.max(-50, Math.min(50, e.deltaY));
     zoomAt(mx, my, Math.exp(-d * 0.01));
   }, { passive: false });
-  canvas.addEventListener('dblclick', (e) => { const [mx, my] = local(e); zoomAt(mx, my, 2); });
+  canvas.addEventListener('dblclick', (e) => { const [mx, my] = local(e); if (morph || labelAt(mx, my)) return; zoomAt(mx, my, 2); });
   zoomUi.addEventListener('click', (e) => {
     const z = e.target.closest('button')?.dataset.z;
     if (z === 'reset') resetView();
@@ -716,7 +885,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     return best;
   }
   canvas.addEventListener('pointermove', (e) => {
-    if (!L) return;
+    if (!L || morph) return;
     if (drag) {
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
@@ -730,7 +899,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     if ((lb?.sec.topic ?? null) !== hoverLabel) { hoverLabel = lb?.sec.topic ?? null; requestDraw(); }
     if (lb) {
       if (hover) { hover = null; requestDraw(); }
-      tip.hidden = true;
+      showLabelTip(lb);
       canvas.style.cursor = 'pointer';
       return;
     }
@@ -744,25 +913,30 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     return labelBoxes.find(b => mx >= b.x0 && mx <= b.x1 && my >= b.y0 && my <= b.y1) || null;
   }
   canvas.addEventListener('click', (e) => {
-    if (drag?.moved) return;
+    if (drag?.moved || morph) return;
     const [mx, my] = local(e);
     const lb = labelAt(mx, my);
-    if (lb) { if (sugState?.topic === lb.sec.topic) closeSuggest(); else openSuggest(lb); return; }
+    if (lb) {
+      if (!focus) { setFocus(lb.sec.topic); return; }                      // open the topic
+      if (sugState?.sub === lb.sec.topic) closeSuggest(); else openSuggest(lb);   // a problem to try there
+      return;
+    }
     if (sugState) { closeSuggest(); return; }
     if (hover && onOpen) onOpen(hover);
   });
 
-  // ------------------------------------------------- topic suggestions ----
-  // Click a topic's label: a suggested next problem on that arc, from the
-  // recommender (goal-aware). "another" steps through its top few.
+  // ---------------------------------------------- subtopic suggestions ----
+  // In an opened topic, click a subtopic's label: a suggested next problem
+  // there, from the recommender (goal-aware). "another" steps through its top few.
   async function openSuggest(box) {
-    const topic = box.sec.topic;
-    sugState = { topic, box, recs: null, i: 0 };
+    const topic = focus, sub = box.sec.topic;
+    sugState = { topic, sub, label: box.sec.label, box, recs: null, i: 0 };
+    tip.hidden = true;                               // the label's hover card would sit under it
     renderSuggest();
     requestDraw();
     let recs = [];
-    try { recs = (await onTopic?.(topic)) || []; } catch (e) { recs = []; }
-    if (sugState?.topic !== topic) return;           // closed or switched meanwhile
+    try { recs = (await onTopic?.(topic, sub)) || []; } catch (e) { recs = []; }
+    if (sugState?.topic !== topic || sugState?.sub !== sub) return;   // closed or switched meanwhile
     sugState.recs = recs;
     renderSuggest();
   }
@@ -777,7 +951,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     sug.textContent = '';
     const head = document.createElement('div');
     head.className = 'sug-head';
-    head.textContent = `${topicLabel(st.topic)} · next up`;
+    head.textContent = `${st.label} · next up`;
     sug.appendChild(head);
     const rec = st.recs?.[st.i];
     if (!st.recs) {
@@ -816,10 +990,49 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     sug.style.left = `${x}px`;
     sug.style.top = `${Math.max(8, y)}px`;
   }
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSuggest(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (sugState) closeSuggest();
+    else if (focus) setFocus(null);                  // back to every topic
+  });
   document.addEventListener('pointerdown', (e) => {
     if (sugState && !sug.contains(e.target) && e.target !== canvas) closeSuggest();
   });
+
+  // Hovering an arc's label: how many you've solved there and how strong you are.
+  function showLabelTip(box) {
+    const sec = box.sec, v = strengthIn(focus, sec.topic);
+    tip.textContent = '';
+    const head = document.createElement('div');
+    head.className = 'tip-head';
+    const sw = document.createElement('i');
+    sw.className = 'tip-dot';
+    sw.style.background = paint.tone[sec.topic]?.recent || COLORS.hi;
+    const b = document.createElement('b');
+    b.textContent = focus ? `${topicLabel(focus)} › ${sec.label}` : sec.label;
+    head.append(sw, b);
+    const meta = document.createElement('div');
+    meta.className = 'tip-meta';
+    meta.textContent = `${phase ? `${sec.inCount} of ${sec.count}` : sec.count} solved here`;
+    tip.append(head, meta);
+    const str = document.createElement('div');
+    str.className = 'tip-from';
+    str.textContent = !v ? 'no strength yet'
+      : v.sure ? `${Math.round(v.p * 100)}% chance on a typical Medium · from ${v.n} you've tried`
+      : `about ${Math.round(v.p * 100)}% on a typical Medium · a rough guess, ${v.n ? `only ${v.n}` : 'none'} tried`;
+    tip.appendChild(str);
+    const hint = document.createElement('div');
+    hint.className = 'tip-also';
+    hint.textContent = focus ? 'click for a problem to try' : 'click to see its subtopics';
+    tip.appendChild(hint);
+    tip.hidden = false;
+    const off = (stage.clientWidth - W) / 2;
+    const tw = tip.offsetWidth || 220, th = tip.offsetHeight || 70;
+    let x = off + (box.x0 + box.x1) / 2 - tw / 2, y = box.y1 + 6;
+    if (y + th > H) y = box.y0 - th - 6;
+    tip.style.left = `${Math.max(8, Math.min(stage.clientWidth - tw - 8, x))}px`;
+    tip.style.top = `${Math.max(8, y)}px`;
+  }
 
   function showTip(nd) {
     const when = nd.undated ? 'on NeetCode'
@@ -839,7 +1052,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     const ph = view?.phases?.some(p => p.id !== 'unstructured')
       ? (nd.phases || [nd.phase]).map(id => phaseInfo(id)?.name).filter(Boolean).join(', ') || null
       : null;
-    meta.textContent = [nd.difficulty, topicLabel(nd.sec), when, ph, due ? 'due' : null].filter(Boolean).join(' · ');
+    meta.textContent = [nd.difficulty, secLabel(nd.sec), when, ph, due ? 'due' : null].filter(Boolean).join(' · ');
     tip.append(head, meta);
     if (nd.parentTitle) {
       const from = document.createElement('div');
@@ -853,7 +1066,7 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
     if (nd.alsoIn?.length) {
       const also = document.createElement('div');
       also.className = 'tip-also';
-      also.textContent = `also ${nd.alsoIn.map(topicLabel).join(', ')}`;
+      also.textContent = `also ${nd.alsoIn.map(secLabel).join(', ')}`;
       tip.appendChild(also);
     }
     tip.hidden = false;
@@ -889,6 +1102,8 @@ export function mountGrowth(root, { onOpen, onTopic, onOpenSuggestion } = {}) {
       const sameGoal = view && v.goal?.id === view.goal?.id;
       view = v;
       if (phase && !phaseInfo(phase)) phase = null;   // that phase was deleted, or no longer has anything
+      if (focus && !v.problems.some(p => topicOfProblem(p) === focus)) focus = null;
+      backBtn.hidden = !focus;
       if (sugState && !sameGoal) closeSuggest();
       readColors();
       resize();

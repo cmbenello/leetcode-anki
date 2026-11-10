@@ -10,9 +10,9 @@ const problemHref = (lcUrl, ncUrl) => (openOn === 'neetcode' && ncUrl ? ncUrl : 
 
 const growth = mountGrowth(document.getElementById('growth'), {
   onOpen: (p) => { location.href = problemHref(p.url, ncPage(p.nc)); },
-  // a topic label was clicked: suggestions on that arc, for the active goal
-  onTopic: async (topic) => {
-    const r = await send('getRecommendations', { id: goalState.activeId, topic, k: 5 });
+  // a subtopic label was clicked on an opened topic: suggestions there, for the active goal
+  onTopic: async (topic, sub = null) => {
+    const r = await send('getRecommendations', { id: goalState.activeId, topic, sub, k: 5 });
     return r?.ok ? r.recs.map(x => ({ ...x, href: problemHref(x.url, x.ncUrl) })) : [];
   },
   onOpenSuggestion: (rec) => { location.href = problemHref(rec.url, rec.ncUrl); },

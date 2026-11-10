@@ -1,7 +1,7 @@
 // Run with:  node tests/growth.test.js
 // The growth view's layout is pure; these pin down how problems are placed and linked.
 import assert from 'node:assert/strict';
-import { layout, relate, primaryTopic, difficultyScore, spread } from '../extension/newtab/growth.js';
+import { layout, relate, primaryTopic, difficultyScore, spread, subtopicGroups } from '../extension/newtab/growth.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -132,6 +132,26 @@ test('layout of 600 problems is fast', () => {
   assert.ok(ms < 400, `${ms.toFixed(0)} ms`);
   console.log(`       (600 problems: ${ms.toFixed(0)} ms)`);
   assert.equal(primaryTopic(['array', 'dynamic-programming']), 'dp-1d');
+});
+
+test('an opened topic lays out its subtopics as the arcs, on the same rings', () => {
+  const probs = [
+    P('validate-binary-search-tree', ['tree', 'depth-first-search', 'binary-search-tree', 'binary-tree'], {}, 0),
+    P('kth-smallest-element-in-a-bst', ['tree', 'depth-first-search', 'binary-search-tree', 'binary-tree'], {}, 1),
+    P('binary-tree-level-order-traversal', ['tree', 'breadth-first-search', 'binary-tree'], {}, 2),
+    P('maximum-depth-of-binary-tree', ['tree', 'depth-first-search', 'breadth-first-search', 'binary-tree'], { difficulty: 'Easy' }, 3),
+    P('lowest-common-ancestor-of-a-binary-search-tree', ['tree', 'depth-first-search', 'binary-search-tree', 'binary-tree', 'lowest-common-ancestor'], {}, 4),
+  ];
+  const full = layout(probs.map(p => ({ ...p })), OPTS);
+  const L = layout(probs.map(p => ({ ...p })), { ...OPTS, ...subtopicGroups('trees') });
+  assert.deepEqual(L.sectors.map(s => s.topic), ['lca', 'bst', 'bfs', 'core'], 'in the topic\'s subtopic order, empty ones left out');
+  assert.equal(L.sectors.find(s => s.topic === 'bst').label, 'binary search trees');
+  assert.deepEqual(L.rings, full.rings, 'same rings, so dots can slide between the views');
+  const lca = L.nodes.find(n => n.slug.startsWith('lowest'));
+  assert.ok(lca.alsoIn.includes('bst'), 'an LCA-in-a-BST problem links to the BST arc');
+  const hues = L.sectors.map(s => s.hue);
+  assert.ok(Math.max(...hues) - Math.min(...hues) <= 120, 'subtopic hues stay near the topic\'s own');
+  assert.ok(L.gaugeR > L.rings[2] && L.sectors.every(s => s.labelR > L.gaugeR), 'gauge between the outer ring and the labels');
 });
 
 let failed = 0;
